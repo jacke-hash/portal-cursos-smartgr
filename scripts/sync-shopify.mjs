@@ -1,0 +1,579 @@
+import 'dotenv/config';
+import { existsSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+
+// --- Caminhos ---
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SERVICE_ACCOUNT_PATH = join(__dirname, '..', 'service-account.json');
+
+// --- Validações antecipadas (fail-fast) ---
+
+if (!process.env.SHOPIFY_ACCESS_TOKEN) {
+  console.error('SHOPIFY_ACCESS_TOKEN não encontrado no .env');
+  process.exit(1);
+}
+
+if (!existsSync(SERVICE_ACCOUNT_PATH)) {
+  console.error('service-account.json não encontrado na raiz do projeto');
+  process.exit(1);
+}
+
+// --- Catálogo de cursos: única fonte de verdade ---
+// Chave: product_id Shopify (number). Valor: nome fallback (usado se a API não retornar o produto).
+
+const KNOWN_COURSES = new Map([
+  [8821788115101, 'Treinamento Prático - Prisma Peeling'],
+  [8821788180637, 'Treinamento Presencial - Protocolo Peptídeos'],
+  [8701283827869, 'Terapias Médicas Baseadas em Eletroporação'],
+  [8680458551453, 'Treinamento Presencial de Microagulhamento'],
+  [8955598438557, 'Presencial - Pocket Microagulhamento'],
+  [8695759601821, 'SMART DAY'],
+  [8928830193821, '8° Congresso'],
+  [8958883791005, 'Smart Tecnologias - Atualização sobre equipamentos na Medicina Estética'],
+  [8958133764253, 'Treinamento Prático: Protocolos Capilares na era de Canetas Emagrecedoras'],
+  [8958132125853, 'Treinamento Prático: Agregando tratamentos de Sobrancelhas & Lábios'],
+  [8958130454685, 'Treinamento Prático: Prisma Peeling - K Beauty no Gerenciamento de Cicatrizes'],
+  [8957017981085, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
+  [8956248555677, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
+  [8956141568157, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Caxias do Sul'],
+]);
+
+const VALID_PRODUCT_IDS = new Set(KNOWN_COURSES.keys());
+
+// IDs que devem obrigatoriamente existir na Shopify
+const CRITICAL_IDS = [8695759601821, 8928830193821];
+
+// Ignorar variantes com data anterior a 01/06/2026
+const DATE_CUTOFF = new Date('2026-06-01T12:00:00.000Z');
+
+// --- Shopify Config ---
+
+const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const SHOPIFY_STORE = 'smart-gr-pro.myshopify.com';
+const SHOPIFY_API_VERSION = '2024-01';
+const SHOPIFY_BASE = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}`;
+
+// --- Firebase Init ---
+
+const serviceAccount = JSON.parse(readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
+initializeApp({ credential: cert(serviceAccount) });
+const db = getFirestore();
+
+// --- Helpers HTTP ---
+
+function shopifyHeaders() {
+  return {
+    'X-Shopify-Access-Token': SHOPIFY_TOKEN,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function shopifyGet(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  let resp;
+  try {
+    resp = await fetch(url, { headers: shopifyHeaders(), signal: controller.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Timeout Shopify API (30s excedido)');
+    throw e;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`Shopify API ${resp.status}: ${body}`);
+  }
+  return { data: await resp.json(), headers: resp.headers };
+}
+
+// Busca paginada genérica — retorna array de itens
+async function fetchAllPages(firstUrl, extractItems) {
+  const items = [];
+  let url = firstUrl;
+
+  while (url) {
+    console.log(`  → GET ${url}`);
+    const { data, headers } = await shopifyGet(url);
+    const page = extractItems(data);
+    items.push(...page);
+    console.log(`    ${page.length} item(s) nesta página | total acumulado: ${items.length}`);
+
+    const link = headers.get('Link') || '';
+    const match = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = match ? match[1] : null;
+  }
+
+  return items;
+}
+
+// --- Helpers de dados ---
+
+// Parseia variante.
+// Formato com data: "13/07/2026 - São Paulo (Zona Sul)" → { date: Date, local: string }
+// Formato sem data: "Lote 1", "VIP", "Congressista"    → { date: null, local: string }
+// Retorna null apenas se title for vazio ou não-string.
+function parseVariantTitle(title) {
+  if (!title || typeof title !== 'string') return null;
+
+  const idx = title.indexOf(' - ');
+
+  // Sem separador " - ": variante sem data (ex: "Lote 1", "VIP")
+  if (idx === -1) {
+    return { date: null, local: title.trim() };
+  }
+
+  const datePart = title.slice(0, idx).trim();
+  const local = title.slice(idx + 3).trim();
+  const segments = datePart.split('/');
+
+  // Separador existe mas parte esquerda não é DD/MM/YYYY
+  if (segments.length !== 3) {
+    return { date: null, local: title.trim() };
+  }
+
+  const [day, month, year] = segments;
+  const date = new Date(`${year}-${month}-${day}T12:00:00.000Z`);
+
+  // Data inválida: tratar como variante sem data
+  if (isNaN(date.getTime())) {
+    return { date: null, local: title.trim() };
+  }
+
+  return { date, local };
+}
+
+function getCustomerName(order) {
+  const first =
+    order.billing_address?.first_name ||
+    order.customer?.first_name ||
+    order.shipping_address?.first_name || '';
+  const last =
+    order.billing_address?.last_name ||
+    order.customer?.last_name ||
+    order.shipping_address?.last_name || '';
+  return `${first} ${last}`.trim();
+}
+
+function getPhone(order) {
+  return (
+    order.billing_address?.phone ||
+    order.customer?.phone ||
+    order.shipping_address?.phone || ''
+  );
+}
+
+function isConfirmado(status) {
+  return status === 'Confirmado' || status === 'Presente';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sync() {
+  console.log('=== Sincronização Shopify → Firestore ===');
+  console.log(`Início: ${new Date().toISOString()}`);
+  console.log('Shopify Token OK');
+  console.log('Service Account OK');
+  console.log('Firebase OK');
+  console.log(`Cursos esperados: ${KNOWN_COURSES.size}\n`);
+
+  // ─── FASE 1: Catálogo de produtos ─────────────────────────────────────────
+  console.log('=== FASE 1: Catálogo de cursos ===');
+  console.log('Buscando TODOS os produtos na Shopify...');
+
+  const allProducts = await fetchAllPages(
+    `${SHOPIFY_BASE}/products.json?limit=250&fields=id,title,status`,
+    d => d.products || []
+  );
+
+  console.log(`\nTotal de produtos encontrados na Shopify: ${allProducts.length}`);
+
+  // Indexar por id
+  const shopifyProductMap = new Map();
+  for (const p of allProducts) {
+    shopifyProductMap.set(Number(p.id), p);
+  }
+
+  // Separar encontrados e ausentes
+  const foundIds = [...VALID_PRODUCT_IDS].filter(id => shopifyProductMap.has(id));
+  const missingIds = [...VALID_PRODUCT_IDS].filter(id => !shopifyProductMap.has(id));
+
+  console.log(`\nIDs encontrados na Shopify (${foundIds.length}/${KNOWN_COURSES.size}):`);
+  for (const id of foundIds) {
+    const title = shopifyProductMap.get(id).title;
+    console.log(`  ✓ ${id}: "${title}"`);
+  }
+
+  if (missingIds.length > 0) {
+    console.log(`\nIDs ausentes na Shopify (${missingIds.length}):`);
+    for (const id of missingIds) {
+      console.log(`  ✗ ${id}: "${KNOWN_COURSES.get(id)}"`);
+    }
+  }
+
+  // Validação de IDs críticos
+  console.log('\nValidando IDs críticos...');
+  for (const criticalId of CRITICAL_IDS) {
+    if (shopifyProductMap.has(criticalId)) {
+      console.log(`  ✓ ${criticalId} (${KNOWN_COURSES.get(criticalId)}): OK`);
+    } else {
+      console.error(`  ✗ ERRO CRÍTICO: ${criticalId} (${KNOWN_COURSES.get(criticalId)}) NÃO encontrado na Shopify`);
+      console.error(`    Possíveis causas:`);
+      console.error(`    1. Produto arquivado ou deletado na Shopify`);
+      console.error(`    2. Token sem permissão para listas de produtos`);
+      console.error(`    3. ID incorreto em KNOWN_COURSES`);
+    }
+  }
+
+  // Criar/atualizar documento de curso para TODOS os 14 IDs
+  console.log('\nGravando documentos de cursos no Firestore...');
+  let cursosSincronizados = 0;
+
+  for (const [productId, fallbackName] of KNOWN_COURSES) {
+    const product = shopifyProductMap.get(productId);
+    const nomeCurso = product?.title || fallbackName;
+    const cursoRef = db.collection('cursos').doc(String(productId));
+
+    try {
+      await cursoRef.set(
+        {
+          nome: nomeCurso,
+          shopifyProductId: String(productId),
+          ativo: true,
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true }   // preserva totalInscritos e proximoEventoLabel existentes
+      );
+
+      const origem = product ? 'Shopify' : 'fallback';
+      console.log(`  ✓ ${productId}: "${nomeCurso}" [${origem}]`);
+      cursosSincronizados++;
+    } catch (e) {
+      console.error(`  ✗ Erro ao gravar curso ${productId}: ${e.message}`);
+    }
+  }
+
+  // ─── FASE 2: Pedidos e inscritos ──────────────────────────────────────────
+  console.log('\n=== FASE 2: Pedidos e inscritos ===');
+
+  console.log('Buscando pedidos pagos...');
+  const paidOrders = await fetchAllPages(
+    `${SHOPIFY_BASE}/orders.json?financial_status=paid&status=any&limit=250`,
+    d => d.orders || []
+  );
+  console.log(`Paid concluído: ${paidOrders.length} pedido(s)`);
+
+  console.log('Buscando pedidos reembolsados...');
+  const refundedOrders = await fetchAllPages(
+    `${SHOPIFY_BASE}/orders.json?financial_status=refunded&status=any&limit=250`,
+    d => d.orders || []
+  );
+  console.log(`Refunded concluído: ${refundedOrders.length} pedido(s)`);
+
+  const allOrders = [
+    ...paidOrders.map(o => ({ ...o, _isRefunded: false })),
+    ...refundedOrders.map(o => ({ ...o, _isRefunded: true })),
+  ];
+
+  const activeOrders = allOrders.filter(
+    o => o.cancel_reason === null || o.cancel_reason === undefined
+  );
+
+  console.log(`\nTotal de pedidos: ${allOrders.length}`);
+  console.log(`Pedidos ativos (não cancelados): ${activeOrders.length}`);
+
+  // variantMap: `${productId}:${variantId}` → { productId, variantId, varianteTitle, date }
+  const variantMap = new Map();
+  let totalInscritos = 0;
+  let inscritosIgnorados = 0;
+
+  for (const order of activeOrders) {
+    const isRefunded = order._isRefunded;
+    const vendedor =
+      order.note_attributes?.find(a => a.name === 'Affiliate')?.value || '';
+
+    for (const item of order.line_items) {
+      const productId = Number(item.product_id);
+      if (!VALID_PRODUCT_IDS.has(productId)) continue;
+
+      if (!item.variant_id) {
+        console.log(`  Aviso: item sem variant_id. Pedido ${order.name}, produto ${productId}`);
+        inscritosIgnorados++;
+        continue;
+      }
+
+      const variantId = String(item.variant_id);
+      const variantTitle = item.variant_title || '';
+
+      if (!variantTitle) {
+        console.log(`  Aviso: variante sem título. Pedido ${order.name}, produto ${productId}`);
+        inscritosIgnorados++;
+        continue;
+      }
+
+      const parsed = parseVariantTitle(variantTitle);
+      if (!parsed) {
+        // Só chega aqui se title for vazio/null — já validado acima
+        inscritosIgnorados++;
+        continue;
+      }
+
+      // Debug dedicado ao Congresso
+      if (productId === 8928830193821) {
+        console.log(
+          `  [CONGRESSO] Pedido ${order.name} | Variante: "${variantTitle}"` +
+          ` | Qty: ${item.quantity} | Date: ${parsed.date ? parsed.date.toISOString().slice(0, 10) : 'sem data'}`
+        );
+      }
+
+      // Corte de data: aplicar SOMENTE quando a variante tem data explícita.
+      // Variantes sem data (Lote 1, VIP, Congressista, etc.) passam sem filtro.
+      if (parsed.date !== null && parsed.date < DATE_CUTOFF) {
+        inscritosIgnorados++;
+        continue;
+      }
+
+      const mapKey = `${productId}:${variantId}`;
+      if (!variantMap.has(mapKey)) {
+        variantMap.set(mapKey, {
+          productId,
+          variantId,
+          varianteTitle: variantTitle,
+          date: parsed.date,   // pode ser null para variantes sem data
+        });
+      }
+
+      // ── Cálculo financeiro real ─────────────────────────────────────────────
+      const quantidade    = item.quantity || 1;
+      const precoCatalogo = parseFloat(item.price) || 0;
+      const subtotal      = precoCatalogo * quantidade;
+      const current_total_discounts = order.current_total_discounts;
+
+      // 1ª tentativa: desconto no nível do item (campos nativos da Shopify)
+      let descontoAplicado =
+        item.total_discount !== undefined
+          ? (parseFloat(item.total_discount) || 0)
+          : (item.discount_allocations || []).reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+
+      // 2ª tentativa: a Shopify às vezes aplica cupons globais apenas em order.current_total_discounts,
+      // deixando item.total_discount e discount_allocations zerados.
+      // Nesse caso distribuímos o desconto do pedido proporcional ao subtotal deste item.
+      if (descontoAplicado === 0) {
+        const orderDiscount = parseFloat(current_total_discounts) || 0;
+        if (orderDiscount > 0) {
+          const orderSubtotal = (order.line_items || []).reduce(
+            (s, li) => s + (parseFloat(li.price) || 0) * (li.quantity || 1), 0
+          );
+          const share = orderSubtotal > 0 ? subtotal / orderSubtotal : 1;
+          descontoAplicado = Math.min(orderDiscount * share, subtotal);
+        }
+      }
+
+      const valorFinalPago      = Math.max(0, subtotal - descontoAplicado);
+      const valorUnitarioPago   = quantidade > 0 ? valorFinalPago / quantidade : 0;
+      const valorFinalCalculado = valorFinalPago;
+
+      // ── Dados de localização e empresa ──────────────────────────────────────
+      const cidade = order.billing_address?.city || order.shipping_address?.city || '';
+      const estado = order.billing_address?.province || order.shipping_address?.province || '';
+      const empresa = order.billing_address?.company || order.customer?.default_address?.company || '';
+
+      const inscritoId = `${order.id}-${variantId}`;
+      const inscritoRef = db
+        .collection('cursos').doc(String(productId))
+        .collection('eventos').doc(variantId)
+        .collection('inscritos').doc(inscritoId);
+
+      const now = Timestamp.now();
+      let snap;
+
+      try {
+        snap = await inscritoRef.get();
+      } catch (e) {
+        console.log(`  Erro ao ler inscrito ${inscritoId}: ${e.message}`);
+        continue;
+      }
+
+      console.log({
+        subtotal,
+        current_total_discounts,
+        descontoAplicado,
+        valorFinalCalculado,
+      });
+
+      try {
+        if (snap.exists) {
+          const updateData = {
+            pedido: order.name,
+            shopifyId: String(order.id),
+            productId: String(productId),
+            variantId,
+            quantidade,
+            precoCatalogo,
+            descontoAplicado,
+            valorUnitarioPago,
+            valorFinalPago,
+            valor: valorFinalPago,     // campo legado — mantém compatibilidade
+            dataCompra: Timestamp.fromDate(new Date(order.created_at)),
+            email: order.email || '',
+            cliente: getCustomerName(order),
+            telefone: getPhone(order),
+            cidade,
+            estado,
+            empresa,
+            cpf: '',
+            vendedor,
+            variante: variantTitle,
+            updatedAt: now,
+          };
+          // Reembolso sempre força atualização do status
+          if (isRefunded) updateData.status = 'Reembolsado';
+          await inscritoRef.update(updateData);
+        } else {
+          await inscritoRef.set({
+            pedido: order.name,
+            shopifyId: String(order.id),
+            productId: String(productId),
+            variantId,
+            quantidade,
+            precoCatalogo,
+            descontoAplicado,
+            valorUnitarioPago,
+            valorFinalPago,
+            valor: valorFinalPago,     // campo legado
+            dataCompra: Timestamp.fromDate(new Date(order.created_at)),
+            email: order.email || '',
+            cliente: getCustomerName(order),
+            telefone: getPhone(order),
+            cidade,
+            estado,
+            empresa,
+            cpf: '',
+            vendedor,
+            variante: variantTitle,
+            status: isRefunded ? 'Reembolsado' : 'Não Confirmado',
+            observacao: '',
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+        totalInscritos++;
+      } catch (e) {
+        console.log(`  Erro ao gravar inscrito ${inscritoId}: ${e.message}`);
+      }
+    }
+  }
+
+  console.log(`\nInscritos gravados/atualizados: ${totalInscritos}`);
+  console.log(`Inscritos ignorados (data passada / sem variante): ${inscritosIgnorados}`);
+
+  // ─── FASE 3: Agregados de eventos ─────────────────────────────────────────
+  console.log('\n=== FASE 3: Agregados de eventos ===');
+
+  for (const [, varInfo] of variantMap) {
+    const { productId, variantId, varianteTitle, date } = varInfo;
+    const eventoRef = db
+      .collection('cursos').doc(String(productId))
+      .collection('eventos').doc(variantId);
+
+    try {
+      const inscritosSnap = await eventoRef.collection('inscritos').get();
+      const totalEvento = inscritosSnap.size;
+      const confirmados = inscritosSnap.docs.filter(
+        d => isConfirmado(d.data().status)
+      ).length;
+
+      await eventoRef.set(
+        {
+          varianteTitle,
+          varianteId: variantId,
+          // Variantes sem data (Lote 1, VIP…) gravam null — não quebra o Firestore
+          data: date ? Timestamp.fromDate(date) : null,
+          ativo: true,
+          totalInscritos: totalEvento,
+          confirmados,
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.log(`  Erro ao atualizar evento ${variantId}: ${e.message}`);
+    }
+  }
+
+  console.log(`Eventos atualizados: ${variantMap.size}`);
+
+  // ─── FASE 4: Agregados de cursos ──────────────────────────────────────────
+  // Itera sobre TODOS os 14 IDs, não apenas os que tiveram inscritos nesta sync
+  console.log('\n=== FASE 4: Agregados de cursos ===');
+
+  const agora = new Date();
+
+  for (const productId of KNOWN_COURSES.keys()) {
+    const cursoRef = db.collection('cursos').doc(String(productId));
+
+    try {
+      const eventosSnap = await cursoRef.collection('eventos').get();
+
+      let totalCurso = 0;
+      let proximoEventoLabel = '';
+      let proximoData = null;
+
+      for (const eventoDoc of eventosSnap.docs) {
+        const ev = eventoDoc.data();
+        totalCurso += ev.totalInscritos || 0;
+
+        const evDate = ev.data?.toDate?.();
+        if (evDate && evDate >= agora) {
+          if (!proximoData || evDate < proximoData) {
+            proximoData = evDate;
+            proximoEventoLabel = ev.varianteTitle || '';
+          }
+        }
+      }
+
+      await cursoRef.set(
+        {
+          totalInscritos: totalCurso,
+          proximoEventoLabel,
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.log(`  Erro ao atualizar agregados do curso ${productId}: ${e.message}`);
+    }
+  }
+
+  // ─── Comparação final ─────────────────────────────────────────────────────
+  console.log('\n=== Comparação Final ===');
+  console.log(`Esperado:               ${KNOWN_COURSES.size} cursos`);
+  console.log(`Encontrados na Shopify: ${foundIds.length} produto(s)`);
+  console.log(`Sincronizados:          ${cursosSincronizados} curso(s)`);
+  console.log(`Ausentes na Shopify:    ${missingIds.length} produto(s)`);
+  if (missingIds.length > 0) {
+    for (const id of missingIds) {
+      console.log(`  ✗ ${id}: "${KNOWN_COURSES.get(id)}"`);
+    }
+  }
+
+  console.log('\n--- Resumo ---');
+  console.log(`Cursos processados: ${cursosSincronizados}`);
+  console.log(`Eventos processados: ${variantMap.size}`);
+  console.log(`Inscritos processados: ${totalInscritos}`);
+  console.log('\n=== Sincronização concluída com sucesso! ===');
+  console.log(`Fim: ${new Date().toISOString()}`);
+}
+
+sync().catch(err => {
+  console.error('\nErro fatal durante a sincronização:', err.message || err);
+  process.exit(1);
+});

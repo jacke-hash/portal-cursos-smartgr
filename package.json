@@ -1,0 +1,19 @@
+{
+  "name": "smartgr-cursos-portal",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "firebase-admin": "^14.0.0",
+    "vite": "^8.0.12"
+  },
+  "dependencies": {
+    "firebase": "^12.15.0"
+  }
+}

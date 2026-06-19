@@ -1,0 +1,24 @@
+name            = "smartgr-shopify-webhook"
+main            = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Variáveis públicas (não sensíveis)
+[vars]
+FIREBASE_PROJECT_ID = "smartgr-cursos"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Secrets — NUNCA colocar aqui. Configurar via CLI:
+#
+#   npx wrangler secret put SHOPIFY_WEBHOOK_SECRET
+#   npx wrangler secret put SHOPIFY_ACCESS_TOKEN
+#   npx wrangler secret put FIREBASE_SERVICE_ACCOUNT_EMAIL
+#   npx wrangler secret put FIREBASE_PRIVATE_KEY
+#
+# Onde encontrar cada valor:
+#   SHOPIFY_WEBHOOK_SECRET      → Shopify Admin > Configurações > Notificações > Webhooks
+#                                 (campo "Chave secreta" exibido após criar o webhook)
+#   SHOPIFY_ACCESS_TOKEN        → mesmo valor de SHOPIFY_ACCESS_TOKEN no .env local
+#   FIREBASE_SERVICE_ACCOUNT_EMAIL → campo "client_email" do service-account.json
+#   FIREBASE_PRIVATE_KEY           → campo "private_key" do service-account.json
+#                                    (incluir quebras de linha como \n)
+# ──────────────────────────────────────────────────────────────────────────────
