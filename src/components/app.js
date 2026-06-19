@@ -27,6 +27,11 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
+function normalize(str) {
+  return (str || '').toString().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 let state = {
   route: "cursos",
   cursos: [],
@@ -54,7 +59,10 @@ export function renderApp(target) {
   bindGlobalEvents();
   unsubCursos = listenCursos((cursos) => {
     state.cursos = cursos;
-    render();
+    if (state.route === "cursos") {
+      const grid = root.querySelector("#course-grid");
+      if (grid) grid.innerHTML = courseGridContent();
+    }
   });
   render();
 }
@@ -80,10 +88,13 @@ function bindGlobalEvents() {
 }
 
 function render() {
+  const scroll = document.documentElement.scrollTop || document.body.scrollTop;
   const view = root.querySelector("#view");
   if (state.route === "cursos") view.innerHTML = cursosView();
   if (state.route === "curso") view.innerHTML = cursoView();
   if (state.route === "evento") view.innerHTML = eventoView();
+  document.documentElement.scrollTop = scroll;
+  document.body.scrollTop = scroll;
   bindDynamicEvents();
 }
 
@@ -91,10 +102,10 @@ function render() {
 
 function filteredCursos() {
   if (!state.search) return state.cursos;
-  const q = state.search.toLowerCase();
+  const q = normalize(state.search);
   return state.cursos.filter((c) =>
-    (c.nome || "").toLowerCase().includes(q) ||
-    (c.proximoEventoLabel || "").toLowerCase().includes(q)
+    normalize(c.nome).includes(q) ||
+    normalize(c.proximoEventoLabel).includes(q)
   );
 }
 
@@ -134,12 +145,8 @@ function courseCard(curso) {
   `;
 }
 
-function cursoView() {
-  if (!state.curso) return empty("Curso não encontrado.");
-
+function computeEventoSections() {
   const agora = new Date();
-
-  // 1. Ordenar cronologicamente (null = sem data → vai para o final)
   const sorted = [...state.eventos].sort((a, b) => {
     const da = a.data?.toDate?.() ?? null;
     const db = b.data?.toDate?.() ?? null;
@@ -149,28 +156,46 @@ function cursoView() {
     return da - db;
   });
 
-  // 2. Contar futuros e passados (para cards resumo e botão toggle)
-  const pastCount = sorted.filter(e => {
+  const past = sorted.filter(e => {
     const d = e.data?.toDate?.() ?? null;
     return d !== null && d < agora;
-  }).length;
-  const futureCount = sorted.length - pastCount;
+  });
+  const future = sorted.filter(e => {
+    const d = e.data?.toDate?.() ?? null;
+    return d === null || d >= agora;
+  });
 
-  // 3. Filtrar eventos passados (a menos que toggle esteja ativo)
-  let visibles = state.showPastEventos
-    ? sorted
-    : sorted.filter(e => {
-        const d = e.data?.toDate?.() ?? null;
-        return d === null || d >= agora;  // sem data = sempre visível
-      });
+  const q = normalize(state.eventoSearch.trim());
+  const applySearch = (list) => q
+    ? list.filter(e => normalize(e.varianteTitle || e.id).includes(q))
+    : list;
 
-  // 4. Filtrar por busca
-  const q = state.eventoSearch.toLowerCase().trim();
-  if (q) {
-    visibles = visibles.filter(e =>
-      (e.varianteTitle || "").toLowerCase().includes(q)
-    );
+  return {
+    future: applySearch(future),
+    past: applySearch(past),
+    pastCount: past.length,
+    futureCount: future.length,
+  };
+}
+
+function eventoGridContent(sections) {
+  const { future, past } = sections;
+  let html = future.length
+    ? future.map(eventoCard).join("")
+    : `<div class="empty" style="grid-column:1/-1">Nenhum evento futuro encontrado.</div>`;
+
+  if (state.showPastEventos && past.length) {
+    html += `<div class="encerrados-sep" style="grid-column:1/-1"><span class="encerrados-label">Eventos Encerrados</span></div>`;
+    html += past.map(eventoCard).join("");
   }
+
+  return html;
+}
+
+function cursoView() {
+  if (!state.curso) return empty("Curso não encontrado.");
+  const sections = computeEventoSections();
+  const { pastCount, futureCount } = sections;
 
   return `
     <section class="page-head">
@@ -179,13 +204,13 @@ function cursoView() {
         <h2>${state.curso.nome}</h2>
       </div>
     </section>
-    <div class="stats-bar">
+    <div class="stats-bar" id="curso-stats-bar">
       ${statCard("Eventos futuros", futureCount)}
       ${statCard("Eventos encerrados", pastCount)}
     </div>
     <div class="eventos-toolbar">
       <input class="search" data-action="search-evento"
-             placeholder="🔍 Buscar evento..." value="${state.eventoSearch}">
+             placeholder="Buscar evento..." value="${state.eventoSearch}">
       ${pastCount > 0 ? `
         <button class="btn-toggle-past ${state.showPastEventos ? "active" : ""}"
                 data-action="toggle-past-eventos">
@@ -194,8 +219,8 @@ function cursoView() {
             : `Mostrar encerrados (${pastCount})`}
         </button>` : ""}
     </div>
-    <section class="eventos-grid">
-      ${visibles.length ? visibles.map(eventoCard).join("") : empty("Nenhum evento encontrado.")}
+    <section class="eventos-grid" id="eventos-content">
+      ${eventoGridContent(sections)}
     </section>
   `;
 }
@@ -210,10 +235,9 @@ function eventoCard(evento) {
     ? evDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
     : "";
 
-  // Badge de status: visível apenas quando histórico está ativo (mistura de futuros e passados)
-  const statusBadge = state.showPastEventos && evDate
-    ? `<span class="evento-status ${isPast ? "evento-status-encerrado" : "evento-status-proximo"}">
-        ${isPast ? "Encerrado" : "Próximo Evento"}
+  const statusBadge = evDate
+    ? `<span class="evento-status ${isPast ? "evento-status-encerrado" : "evento-status-ativo"}">
+        ${isPast ? "Encerrado" : "Ativo"}
        </span>`
     : "";
 
@@ -253,14 +277,14 @@ function eventoView() {
       </div>
     </section>
 
-    <div class="summary-bar">
+    <div class="summary-bar" id="summary-bar">
       ${summaryCard("Participantes", inscritos.length)}
       ${summaryCard("Variantes", variantesFiltradas)}
       ${summaryCard("Impressos", inscritos.filter(i => i.impresso === true).length)}
       ${summaryCard("Pendentes", inscritos.filter(i => !i.impresso).length)}
     </div>
 
-    <div class="stats-bar">
+    <div class="stats-bar" id="stats-bar">
       ${statCard("Total geral", state.inscritos.length)}
       ${statCard("Confirmados", state.inscritos.filter((i) => i.status === "Confirmado" || i.status === "Presente").length)}
       ${statCard("Não confirmados", state.inscritos.filter((i) => i.status === "Não Confirmado").length)}
@@ -291,7 +315,7 @@ function eventoView() {
       ${hasFilters() ? `<button class="btn-clear" data-action="clear-filters">Limpar filtros</button>` : ""}
     </div>
 
-    <p class="results-count">${inscritos.length} inscritos encontrados</p>
+    <p class="results-count" id="results-count">${inscritos.length} inscritos encontrados</p>
 
     <div class="table-wrap">
       <table class="data-table">
@@ -311,13 +335,13 @@ function eventoView() {
             <th>Impresso</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="inscritos-tbody">
           ${paginated.length ? paginated.map(inscritoRow).join("") : `<tr><td colspan="12" class="empty-row">Nenhum inscrito encontrado.</td></tr>`}
         </tbody>
       </table>
     </div>
 
-    ${totalPages > 1 ? pagination(state.page, totalPages) : ""}
+    <div id="pagination-wrap">${totalPages > 1 ? pagination(state.page, totalPages) : ""}</div>
   `;
 }
 
@@ -395,10 +419,11 @@ function filteredInscritos() {
   let list = [...state.inscritos];
 
   if (state.search) {
-    const q = state.search.toLowerCase();
+    const q = normalize(state.search);
     list = list.filter((i) =>
-      [i.pedido, i.cliente, i.email, i.cpf, i.telefone]
-        .some((v) => v && v.toLowerCase().includes(q))
+      [i.pedido, i.cliente, i.email, i.cpf, i.telefone,
+       i.cidade, i.estado, i.variante, formatDate(i.dataCompra)]
+        .some((v) => normalize(v).includes(q))
     );
   }
 
@@ -424,6 +449,69 @@ function filteredInscritos() {
 
 function hasFilters() {
   return state.search || Object.values(state.filters).some(Boolean);
+}
+
+// ─── PARTIAL UPDATES ─────────────────────────────────────────────────────────
+
+function eventoViewPartialUpdate() {
+  const inscritos = filteredInscritos();
+  const paginated = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+  const totalPages = Math.ceil(inscritos.length / PAGE_SIZE);
+  const variantesFiltradas = new Set(inscritos.map((i) => i.variante).filter(Boolean)).size;
+
+  const el = {
+    summaryBar:     root.querySelector("#summary-bar"),
+    statsBar:       root.querySelector("#stats-bar"),
+    resultsCount:   root.querySelector("#results-count"),
+    tbody:          root.querySelector("#inscritos-tbody"),
+    paginationWrap: root.querySelector("#pagination-wrap"),
+  };
+
+  if (el.summaryBar) el.summaryBar.innerHTML =
+    summaryCard("Participantes", inscritos.length) +
+    summaryCard("Variantes", variantesFiltradas) +
+    summaryCard("Impressos", inscritos.filter(i => i.impresso === true).length) +
+    summaryCard("Pendentes", inscritos.filter(i => !i.impresso).length);
+
+  if (el.statsBar) el.statsBar.innerHTML =
+    statCard("Total geral", state.inscritos.length) +
+    statCard("Confirmados", state.inscritos.filter((i) => i.status === "Confirmado" || i.status === "Presente").length) +
+    statCard("Não confirmados", state.inscritos.filter((i) => i.status === "Não Confirmado").length) +
+    statCard("Presentes", state.inscritos.filter((i) => i.status === "Presente").length) +
+    statCard("Ausentes", state.inscritos.filter((i) => i.status === "Ausente").length) +
+    statCard("Desistentes", state.inscritos.filter((i) => i.status === "Desistente").length);
+
+  if (el.resultsCount) el.resultsCount.textContent = `${inscritos.length} inscritos encontrados`;
+
+  if (el.tbody) el.tbody.innerHTML = paginated.length
+    ? paginated.map(inscritoRow).join("")
+    : `<tr><td colspan="12" class="empty-row">Nenhum inscrito encontrado.</td></tr>`;
+
+  if (el.paginationWrap) el.paginationWrap.innerHTML = totalPages > 1 ? pagination(state.page, totalPages) : "";
+}
+
+function cursoEventosPartialUpdate() {
+  const sections = computeEventoSections();
+  const { pastCount, futureCount } = sections;
+
+  const statsBar    = root.querySelector("#curso-stats-bar");
+  const eventosGrid = root.querySelector("#eventos-content");
+  const toggleBtn   = root.querySelector("[data-action='toggle-past-eventos']");
+
+  if (statsBar) statsBar.innerHTML =
+    statCard("Eventos futuros", futureCount) +
+    statCard("Eventos encerrados", pastCount);
+
+  if (eventosGrid) eventosGrid.innerHTML = eventoGridContent(sections);
+
+  if (toggleBtn) {
+    toggleBtn.className = `btn-toggle-past${state.showPastEventos ? " active" : ""}`;
+    toggleBtn.textContent = state.showPastEventos
+      ? "Ocultar eventos encerrados"
+      : `Mostrar encerrados (${pastCount})`;
+  }
+
+  if (pastCount > 0 && !toggleBtn) render();
 }
 
 // ─── EVENTS ──────────────────────────────────────────────────────────────────
@@ -454,7 +542,7 @@ function handleClick(e) {
     render();
   } else if (action === "toggle-past-eventos") {
     state.showPastEventos = !state.showPastEventos;
-    render();
+    cursoEventosPartialUpdate();
   } else if (action === "toggle-impresso") {
     const id = el.dataset.inscritoId;
     const inscrito = state.inscritos.find((i) => i.id === id);
@@ -491,6 +579,15 @@ const _debouncedCursoSearch = debounce(() => {
   if (grid) grid.innerHTML = courseGridContent();
 }, 200);
 
+const _debouncedEventoSearch = debounce(() => {
+  const grid = root.querySelector("#eventos-content");
+  if (grid) grid.innerHTML = eventoGridContent(computeEventoSections());
+}, 200);
+
+const _debouncedInscritoSearch = debounce(() => {
+  eventoViewPartialUpdate();
+}, 200);
+
 function handleInput(e) {
   if (e.target.dataset.action === "search-cursos") {
     state.search = e.target.value;
@@ -501,12 +598,14 @@ function handleInput(e) {
   if (e.target.dataset.action === "search") {
     state.search = e.target.value;
     state.page = 1;
-    render();
+    _debouncedInscritoSearch();
+    return;
   }
 
   if (e.target.dataset.action === "search-evento") {
     state.eventoSearch = e.target.value;
-    render();
+    _debouncedEventoSearch();
+    return;
   }
 
   if (e.target.dataset.action === "change-obs") {
@@ -566,7 +665,11 @@ function openCurso(cursoId) {
   if (unsubEventos) unsubEventos();
   unsubEventos = listenEventos(cursoId, (eventos) => {
     state.eventos = eventos;
-    render();
+    if (state.route === "curso" && root.querySelector("#eventos-content")) {
+      cursoEventosPartialUpdate();
+    } else if (state.route === "curso") {
+      render();
+    }
   });
   render();
 }
@@ -594,7 +697,14 @@ function openEvento(eventoId) {
   if (unsubInscritos) unsubInscritos();
   unsubInscritos = listenInscritos(state.curso.id, eventoId, (inscritos) => {
     state.inscritos = inscritos;
-    render();
+    if (state.route === "evento" && root.querySelector("#inscritos-tbody")) {
+      const scroll = document.documentElement.scrollTop || document.body.scrollTop;
+      eventoViewPartialUpdate();
+      document.documentElement.scrollTop = scroll;
+      document.body.scrollTop = scroll;
+    } else if (state.route === "evento") {
+      render();
+    }
   });
   render();
 }

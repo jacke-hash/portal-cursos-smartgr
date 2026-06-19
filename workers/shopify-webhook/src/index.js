@@ -308,22 +308,45 @@ async function recalcCurso(db, productId) {
 async function processOrder(db, order, isRefunded) {
   const now      = new Date();
   const affected = [];
+  const lineItems = order.line_items || [];
 
-  for (const item of order.line_items || []) {
+  console.log(`[processOrder] Pedido=${order.name} id=${order.id} itens=${lineItems.length} status=${order.financial_status} reembolsado=${isRefunded}`);
+
+  for (const item of lineItems) {
     const productId = Number(item.product_id);
-    if (!VALID_PRODUCT_IDS.has(productId))        continue;
-    if (!item.variant_id || !item.variant_title)  continue;
+    const courseName = KNOWN_COURSES.get(productId);
+
+    if (!VALID_PRODUCT_IDS.has(productId)) {
+      console.log(`[processOrder] Produto ignorado: product_id=${item.product_id} title="${item.title}"`);
+      continue;
+    }
+    if (!item.variant_id || !item.variant_title) {
+      console.log(`[processOrder] Variante ausente: product_id=${item.product_id} variant_id=${item.variant_id}`);
+      continue;
+    }
+
+    console.log(`[processOrder] Produto identificado: "${courseName}" product_id=${productId} variant="${item.variant_title}"`);
 
     const parsed = parseVariantTitle(item.variant_title);
-    if (!parsed) continue;
-    if (parsed.date !== null && parsed.date < DATE_CUTOFF) continue;
+    if (!parsed) {
+      console.log(`[processOrder] Variante não parseável: "${item.variant_title}"`);
+      continue;
+    }
+    if (parsed.date !== null && parsed.date < DATE_CUTOFF) {
+      console.log(`[processOrder] Evento anterior ao corte: date=${parsed.date?.toISOString()} variant="${item.variant_title}"`);
+      continue;
+    }
 
     const variantId  = String(item.variant_id);
     const inscritoId = `${order.id}-${variantId}`;
     const path       = `cursos/${productId}/eventos/${variantId}/inscritos/${inscritoId}`;
 
+    console.log(`[processOrder] Evento identificado: variantId=${variantId} date=${parsed.date?.toISOString() || 'sem_data'} local="${parsed.local}"`);
+
     const fin  = calcFinancials(item, order);
     const cust = extractCustomer(order);
+
+    console.log(`[processOrder] Financeiro: subtotal=${fin.precoCatalogo * fin.quantidade} descontoAplicado=${fin.descontoAplicado} valorFinalPago=${fin.valorFinalPago} cliente="${cust.cliente}"`);
 
     const base = {
       pedido: order.name, shopifyId: String(order.id),
@@ -339,22 +362,22 @@ async function processOrder(db, order, isRefunded) {
     if (existing) {
       if (isRefunded) base.status = 'Reembolsado';
       await db.patch(path, base);
-      console.log(`[webhook] Pedido atualizado: ${order.name} → ${inscritoId}`);
+      console.log(`[processOrder] Inscrito atualizado: ${inscritoId} status=${base.status || existing.status}`);
     } else {
+      const newStatus = isRefunded ? 'Reembolsado' : 'Não Confirmado';
       await db.set(path, {
         ...base,
-        status: isRefunded ? 'Reembolsado' : 'Não Confirmado',
+        status: newStatus,
         observacao: '',
         impresso: false, impressoEm: null, impressoPor: null,
         createdAt: now,
       });
-      console.log(`[webhook] Pedido recebido: ${order.name} → ${inscritoId}`);
+      console.log(`[processOrder] Inscrito criado: ${inscritoId} status=${newStatus} cliente="${cust.cliente}"`);
     }
 
     affected.push({ productId, variantId, varianteTitle: item.variant_title, date: parsed.date });
   }
 
-  // Recalcula agregados de evento e curso (deduplica por variante)
   const seen = new Set();
   for (const { productId, variantId, varianteTitle, date } of affected) {
     const key = `${productId}:${variantId}`;
@@ -362,9 +385,11 @@ async function processOrder(db, order, isRefunded) {
       seen.add(key);
       await recalcEvento(db, productId, variantId, varianteTitle, date);
       await recalcCurso(db, productId);
+      console.log(`[processOrder] Agregados recalculados: curso=${productId} evento=${variantId}`);
     }
   }
 
+  console.log(`[processOrder] Concluído: ${affected.length} inscrição(ões) processada(s)`);
   return affected.length;
 }
 
