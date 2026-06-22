@@ -14,6 +14,7 @@
     "vite": "^8.0.12"
   },
   "dependencies": {
-    "firebase": "^12.15.0"
+    "firebase": "^12.15.0",
+    "googleapis": "^173.0.0"
   }
 }

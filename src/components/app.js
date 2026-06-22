@@ -108,7 +108,8 @@ let state = {
   filters: { status: "", vendedor: "", variante: "", impresso: "" },
   sortKey: "dataCompra",
   sortDir: "desc",
-  page: 1
+  page: 1,
+  selectedIds: new Set(),   // seleção manual de inscritos (bulk actions)
 };
 
 let unsubCursos    = null;
@@ -451,38 +452,8 @@ function inscritosStats() {
   };
 }
 
-function eventoView() {
-  if (!state.evento) return empty("Evento não encontrado.");
-  const inscritos = filteredInscritos();
-  const paginated = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
-  const totalPages = Math.ceil(inscritos.length / PAGE_SIZE);
-  const vendedores = [...new Set(state.inscritos.map(i => i.vendedor).filter(Boolean))];
-  const variantes = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
-  const stats = inscritosStats();
-
+function _filtersBar(vendedores, variantes) {
   return `
-    <section class="page-head">
-      <div>
-        <button class="back-btn" data-action="go-curso">← ${state.curso?.nome || "Curso"}</button>
-        <h2>${state.evento.varianteTitle || state.evento.id}</h2>
-      </div>
-      <div class="export-btns">
-        <button class="btn-export" data-action="export-excel">${icon.fileSpreadsheet()} Exportar Excel</button>
-        <button class="btn-export" data-action="export-csv">${icon.fileText()} Exportar CSV</button>
-      </div>
-    </section>
-
-    <div class="stats-bar" id="stats-bar">
-      ${statCard("Total Geral",      stats.total,          "",               icon.users())}
-      ${statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle())}
-      ${statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3())}
-      ${statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin())}
-      ${statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX())}
-      ${statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus())}
-      ${statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle())}
-      ${statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet())}
-    </div>
-
     <div class="filters-bar">
       <div class="filter-wrap filter-wrap--grow">
         <span class="filter-icon">${icon.search()}</span>
@@ -515,14 +486,20 @@ function eventoView() {
         <option value="false" ${state.filters.impresso === "false" ? "selected" : ""}>Somente Pendentes</option>
       </select>
       ${hasFilters() ? `<button class="btn-clear" data-action="clear-filters">Limpar filtros</button>` : ""}
-    </div>
+    </div>`;
+}
 
-    <p class="results-count" id="results-count">${inscritos.length} inscritos encontrados</p>
-
+function _tableSection(paginated, colSpan = 13) {
+  const filtered = filteredInscritos();
+  const allSelected = filtered.length > 0 && filtered.every(i => state.selectedIds.has(i.id));
+  return `
     <div class="table-wrap">
       <table class="data-table">
         <thead>
           <tr>
+            <th class="check-col">
+              <input type="checkbox" class="select-all-check" data-action="select-all" ${allSelected ? "checked" : ""} title="Selecionar todos">
+            </th>
             ${th("pedido", "Pedido")}
             ${th("valorFinalPago", "Valor Pago")}
             ${th("dataCompra", "Data Compra")}
@@ -540,13 +517,124 @@ function eventoView() {
         <tbody id="inscritos-tbody">
           ${paginated.length
             ? paginated.map(inscritoRow).join("")
-            : `<tr><td colspan="12" class="empty-row">Nenhum inscrito encontrado.</td></tr>`}
+            : `<tr><td colspan="${colSpan}" class="empty-row">Nenhum inscrito encontrado.</td></tr>`}
         </tbody>
       </table>
+    </div>`;
+}
+
+function eventoView() {
+  if (!state.evento) return empty("Evento não encontrado.");
+  const inscritos = filteredInscritos();
+  const paginated = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+  const totalPages = Math.ceil(inscritos.length / PAGE_SIZE);
+  const vendedores = [...new Set(state.inscritos.map(i => i.vendedor).filter(Boolean))];
+  const variantes  = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
+  const stats = inscritosStats();
+
+  return `
+    <section class="page-head">
+      <div class="page-head-left">
+        <button class="back-btn" data-action="go-curso">← ${state.curso?.nome || "Curso"}</button>
+        <h2>${state.evento.varianteTitle || state.evento.id}</h2>
+      </div>
+      <div class="page-head-right">
+        ${printCounterBar(stats)}
+        <div class="export-btns">
+          ${exportDropdown(inscritos, stats)}
+        </div>
+      </div>
+    </section>
+
+    <div class="stats-bar" id="stats-bar">
+      ${statCard("Total Geral",      stats.total,          "",               icon.users())}
+      ${statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle())}
+      ${statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3())}
+      ${statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin())}
+      ${statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX())}
+      ${statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus())}
+      ${statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle())}
+      ${statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet())}
     </div>
+
+    ${batchActionsBar()}
+
+    <div class="filters-toolbar">
+      <button class="btn-filters-toggle" data-action="toggle-filters-mobile">
+        ${icon.filter()} Filtros${hasFilters() ? " ●" : ""}
+      </button>
+      <p class="results-count" id="results-count">${inscritos.length} inscrito${inscritos.length !== 1 ? "s" : ""} encontrado${inscritos.length !== 1 ? "s" : ""}</p>
+    </div>
+
+    ${_filtersBar(vendedores, variantes)}
+
+    <div class="mobile-cards" id="mobile-cards">
+      ${paginated.length ? paginated.map(inscritoCard).join("") : `<p class="empty-row">Nenhum inscrito encontrado.</p>`}
+    </div>
+
+    ${_tableSection(paginated)}
 
     <div id="pagination-wrap">${totalPages > 1 ? pagination(state.page, totalPages) : ""}</div>
   `;
+}
+
+function batchActionsBar() {
+  const n = state.selectedIds.size;
+  if (n === 0) return `<div id="batch-bar"></div>`;
+  return `
+    <div id="batch-bar" class="batch-bar">
+      <span class="batch-count">${n} selecionado${n > 1 ? "s" : ""}</span>
+      <div class="batch-actions">
+        <button class="batch-btn" data-action="batch-confirmado">✓ Confirmar</button>
+        <button class="batch-btn" data-action="batch-presente">📍 Presente</button>
+        <button class="batch-btn" data-action="batch-impresso">🖨 Marcar Impresso</button>
+        <button class="batch-btn batch-btn--export" data-action="export-selecionados">⬇ Exportar</button>
+        <button class="batch-btn batch-btn--clear" data-action="clear-selection">✕</button>
+      </div>
+    </div>`;
+}
+
+function printCounterBar(stats) {
+  const total = stats.total;
+  const imp   = stats.impressos;
+  const pend  = total - imp;
+  const pct   = total > 0 ? Math.round((imp / total) * 100) : 0;
+  return `
+    <div class="print-counter-bar">
+      <span class="pcount pcount--imp">🖨 ${imp} impresso${imp !== 1 ? "s" : ""}</span>
+      <span class="pcount-sep">·</span>
+      <span class="pcount pcount--pend">📄 ${pend} pendente${pend !== 1 ? "s" : ""}</span>
+      <div class="pcount-bar" title="${pct}%">
+        <div class="pcount-fill" style="width:${pct}%"></div>
+      </div>
+    </div>`;
+}
+
+function exportDropdown(inscritos, stats) {
+  const n = state.selectedIds.size;
+  const tot = stats.total;
+  const imp = stats.impressos;
+  const pend = tot - imp;
+  return `
+    <details class="export-details" id="export-details">
+      <summary class="btn-export">${icon.fileSpreadsheet()} Exportar ▾</summary>
+      <div class="export-dropdown">
+        <p class="dd-label">Filtrados (${inscritos.length})</p>
+        <button class="dd-item" data-action="export-excel">${icon.fileSpreadsheet(16)} Excel</button>
+        <button class="dd-item" data-action="export-csv">${icon.fileText(16)} CSV</button>
+        <hr class="dd-sep">
+        <p class="dd-label">Todos (${tot})</p>
+        <button class="dd-item" data-action="export-tudo-excel">${icon.fileSpreadsheet(16)} Excel</button>
+        <button class="dd-item" data-action="export-tudo-csv">${icon.fileText(16)} CSV</button>
+        <hr class="dd-sep">
+        <button class="dd-item" data-action="export-impressos">🖨 Impressos (${imp})</button>
+        <button class="dd-item" data-action="export-pendentes">📄 Pendentes (${pend})</button>
+        <hr class="dd-sep">
+        <button class="dd-item${n === 0 ? " dd-item--disabled" : ""}" data-action="export-selecionados" ${n === 0 ? "disabled" : ""}>
+          ☑ Selecionados (${n})
+        </button>
+      </div>
+    </details>`;
 }
 
 function statCard(label, value, variant = "", iconHtml = "") {
@@ -567,8 +655,12 @@ function th(key, label) {
 
 function inscritoRow(inscrito) {
   const cls = statusClass(inscrito.status || "");
+  const sel = state.selectedIds.has(inscrito.id);
   return `
-    <tr data-inscrito-id="${inscrito.id}">
+    <tr data-inscrito-id="${inscrito.id}"${sel ? ' class="row-selected"' : ""}>
+      <td class="check-col">
+        <input type="checkbox" class="row-check" data-action="toggle-select" data-inscrito-id="${inscrito.id}" ${sel ? "checked" : ""}>
+      </td>
       <td>${inscrito.pedido || "--"}</td>
       <td>${money.format(valorPago(inscrito))}</td>
       <td>${formatDate(inscrito.dataCompra)}</td>
@@ -596,6 +688,38 @@ function inscritoRow(inscrito) {
       </td>
     </tr>
   `;
+}
+
+function inscritoCard(inscrito) {
+  const cls = statusClass(inscrito.status || "");
+  const sel = state.selectedIds.has(inscrito.id);
+  return `
+    <div class="mobile-card${sel ? " mobile-card--selected" : ""}" data-inscrito-id="${inscrito.id}">
+      <div class="mc-top">
+        <input type="checkbox" class="row-check mc-check" data-action="toggle-select" data-inscrito-id="${inscrito.id}" ${sel ? "checked" : ""}>
+        <span class="mc-pedido">${inscrito.pedido || "--"}</span>
+        <span class="mc-valor">${money.format(valorPago(inscrito))}</span>
+      </div>
+      <div class="mc-body">
+        <strong class="mc-nome">${inscrito.cliente || "--"}</strong>
+        <span class="mc-email">${inscrito.email || ""}</span>
+        <div class="mc-meta">
+          ${inscrito.telefone ? `<span>📞 ${inscrito.telefone}</span>` : ""}
+          ${inscrito.cidade   ? `<span>📍 ${inscrito.cidade}${inscrito.estado ? " – " + inscrito.estado : ""}</span>` : ""}
+          ${inscrito.vendedor ? `<span>👤 ${inscrito.vendedor}</span>` : ""}
+        </div>
+      </div>
+      <div class="mc-bottom">
+        <select class="status-select status-${cls}" data-action="change-status" data-inscrito-id="${inscrito.id}">
+          ${STATUSES.map(s => `<option value="${s}" ${inscrito.status === s ? "selected" : ""}>${s}</option>`).join("")}
+        </select>
+        <button class="impresso-btn${inscrito.impresso ? " ativo" : ""}" data-action="toggle-impresso" data-inscrito-id="${inscrito.id}">
+          ${inscrito.impresso ? "☑ Impresso" : "☐ Pendente"}
+        </button>
+        <button class="mc-action-btn" data-action="quick-confirmado" data-inscrito-id="${inscrito.id}">✓</button>
+        <button class="mc-action-btn" data-action="quick-presente" data-inscrito-id="${inscrito.id}">📍</button>
+      </div>
+    </div>`;
 }
 
 function pagination(page, total) {
@@ -649,19 +773,55 @@ function hasFilters() {
   return state.search || Object.values(state.filters).some(Boolean);
 }
 
+// ─── HELPERS INTERNOS ────────────────────────────────────────────────────────
+
+function inscritosSelecionados() {
+  return [...state.selectedIds]
+    .map(id => state.inscritos.find(i => i.id === id))
+    .filter(Boolean);
+}
+
+function _partialUpdateSelection() {
+  const batchBar = root.querySelector("#batch-bar");
+  if (batchBar) batchBar.outerHTML = batchActionsBar();
+
+  const filtered = filteredInscritos();
+  const allSelected = filtered.length > 0 && filtered.every(i => state.selectedIds.has(i.id));
+  const selectAll = root.querySelector(".select-all-check");
+  if (selectAll) selectAll.checked = allSelected;
+
+  root.querySelectorAll(".row-check").forEach(cb => {
+    cb.checked = state.selectedIds.has(cb.dataset.inscritoId);
+  });
+  root.querySelectorAll(".mobile-card").forEach(card => {
+    const id = card.dataset.inscritoId;
+    card.classList.toggle("mobile-card--selected", state.selectedIds.has(id));
+    const cb = card.querySelector(".row-check");
+    if (cb) cb.checked = state.selectedIds.has(id);
+  });
+}
+
 // ─── PARTIAL UPDATES ─────────────────────────────────────────────────────────
 // [alteração 4] Re-render cirúrgico preserva contexto do usuário sem refresh total
 
 function eventoViewPartialUpdate() {
-  const inscritos = filteredInscritos();
-  const paginated = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
-  const totalPages = Math.ceil(inscritos.length / PAGE_SIZE);
-  const stats = inscritosStats();
+  const inscritos    = filteredInscritos();
+  const paginated    = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+  const totalPages   = Math.ceil(inscritos.length / PAGE_SIZE);
+  const stats        = inscritosStats();
+  const vendedores   = [...new Set(state.inscritos.map(i => i.vendedor).filter(Boolean))];
+  const variantes    = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
 
   const statsBar       = root.querySelector("#stats-bar");
   const resultsCount   = root.querySelector("#results-count");
   const tbody          = root.querySelector("#inscritos-tbody");
   const paginationWrap = root.querySelector("#pagination-wrap");
+  const mobileCards    = root.querySelector("#mobile-cards");
+  const batchBar       = root.querySelector("#batch-bar");
+  const printCounter   = root.querySelector(".print-counter-bar");
+  const exportDetails  = root.querySelector("#export-details");
+  const filtersToolbar = root.querySelector(".filters-toolbar");
+  const filtersBtnDot  = root.querySelector(".btn-filters-toggle");
 
   if (statsBar) statsBar.innerHTML =
     statCard("Total Geral",      stats.total,          "",               icon.users()) +
@@ -673,11 +833,34 @@ function eventoViewPartialUpdate() {
     statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle()) +
     statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet());
 
-  if (resultsCount) resultsCount.textContent = `${inscritos.length} inscritos encontrados`;
+  if (batchBar) batchBar.outerHTML = batchActionsBar();
+
+  if (printCounter) printCounter.outerHTML = printCounterBar(stats);
+
+  if (exportDetails) exportDetails.outerHTML = exportDropdown(inscritos, stats);
+
+  if (resultsCount) {
+    const n = inscritos.length;
+    resultsCount.textContent = `${n} inscrito${n !== 1 ? "s" : ""} encontrado${n !== 1 ? "s" : ""}`;
+  }
+
+  if (filtersBtnDot) {
+    filtersBtnDot.innerHTML = `${icon.filter()} Filtros${hasFilters() ? " ●" : ""}`;
+  }
 
   if (tbody) tbody.innerHTML = paginated.length
     ? paginated.map(inscritoRow).join("")
-    : `<tr><td colspan="12" class="empty-row">Nenhum inscrito encontrado.</td></tr>`;
+    : `<tr><td colspan="13" class="empty-row">Nenhum inscrito encontrado.</td></tr>`;
+
+  if (mobileCards) mobileCards.innerHTML = paginated.length
+    ? paginated.map(inscritoCard).join("")
+    : `<p class="empty-row">Nenhum inscrito encontrado.</p>`;
+
+  // Sync checkbox states after table/card repaint
+  const filtered = filteredInscritos();
+  const allSelected = filtered.length > 0 && filtered.every(i => state.selectedIds.has(i.id));
+  const selectAll = root.querySelector(".select-all-check");
+  if (selectAll) selectAll.checked = allSelected;
 
   if (paginationWrap) paginationWrap.innerHTML = totalPages > 1 ? pagination(state.page, totalPages) : "";
 }
@@ -755,6 +938,64 @@ function handleClick(e) {
       exportExcel();
     } else if (action === "export-csv") {
       exportCSV();
+    } else if (action === "export-tudo-excel") {
+      exportTudo("excel");
+    } else if (action === "export-tudo-csv") {
+      exportTudo("csv");
+    } else if (action === "export-impressos") {
+      exportImpressos();
+    } else if (action === "export-pendentes") {
+      exportPendentes();
+    } else if (action === "export-selecionados") {
+      exportSelecionados();
+
+    // ── Seleção manual ────────────────────────────────────────────────────────
+    } else if (action === "select-all") {
+      const filtered = filteredInscritos();
+      if (state.selectedIds.size === filtered.length && filtered.length > 0) {
+        state.selectedIds = new Set();
+      } else {
+        state.selectedIds = new Set(filtered.map(i => i.id));
+      }
+      _partialUpdateSelection();
+    } else if (action === "toggle-select") {
+      const id = el.dataset.inscritoId;
+      if (state.selectedIds.has(id)) state.selectedIds.delete(id);
+      else state.selectedIds.add(id);
+      _partialUpdateSelection();
+    } else if (action === "clear-selection") {
+      state.selectedIds = new Set();
+      _partialUpdateSelection();
+
+    // ── Ações em lote ─────────────────────────────────────────────────────────
+    } else if (action === "batch-impresso") {
+      for (const id of state.selectedIds) {
+        updateInscrito(state.curso.id, state.evento.id, id, { impresso: true, impressoEm: new Date(), impressoPor: "" });
+      }
+    } else if (action === "batch-confirmado") {
+      for (const id of state.selectedIds) {
+        updateInscrito(state.curso.id, state.evento.id, id, { status: "Confirmado" });
+      }
+      state.selectedIds = new Set();
+      _partialUpdateSelection();
+    } else if (action === "batch-presente") {
+      for (const id of state.selectedIds) {
+        updateInscrito(state.curso.id, state.evento.id, id, { status: "Presente" });
+      }
+      state.selectedIds = new Set();
+      _partialUpdateSelection();
+
+    // ── Ações rápidas mobile ──────────────────────────────────────────────────
+    } else if (action === "quick-confirmado") {
+      updateInscrito(state.curso.id, state.evento.id, el.dataset.inscritoId, { status: "Confirmado" });
+    } else if (action === "quick-presente") {
+      updateInscrito(state.curso.id, state.evento.id, el.dataset.inscritoId, { status: "Presente" });
+
+    // ── Mobile: filtros toggle ────────────────────────────────────────────────
+    } else if (action === "toggle-filters-mobile") {
+      const bar = root.querySelector(".filters-bar");
+      if (bar) bar.classList.toggle("filters-open");
+      el.classList.toggle("active");
     }
   }
 
@@ -901,6 +1142,7 @@ function goToCurso() {
   state.route = "curso";
   state.evento = null;
   state.inscritos = [];
+  state.selectedIds = new Set();
   state.search = "";
   state.filters = { status: "", vendedor: "", variante: "", impresso: "" };
   state.page = 1;
@@ -914,6 +1156,7 @@ function openEvento(eventoId) {
   state.evento = evento;
   state.route = "evento";
   state.inscritos = [];
+  state.selectedIds = new Set();
   state.search = "";
   state.filters = { status: "", vendedor: "", variante: "", impresso: "" };
   state.page = 1;
@@ -971,27 +1214,34 @@ function exportRow(i) {
   ];
 }
 
-function exportExcel() {
-  const rows = filteredInscritos();
-  const lines = [EXPORT_HEADERS.join("\t"), ...rows.map(i => exportRow(i).join("\t"))];
-  const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/tab-separated-values;charset=utf-8" });
+function _download(content, filename, type) {
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = `lista-presenca-${state.evento?.varianteTitle || state.evento?.id || "export"}.xls`;
-  a.click();
+  a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 }
 
-function exportCSV() {
-  const rows = filteredInscritos();
-  const escape = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [EXPORT_HEADERS.map(escape).join(","), ...rows.map(i => exportRow(i).map(escape).join(","))];
-  const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `lista-presenca-${state.evento?.varianteTitle || state.evento?.id || "export"}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+function exportList(rows, suffix, format = "excel") {
+  const slug = (state.evento?.varianteTitle || state.evento?.id || "export")
+    .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase();
+  const base = `lista-${suffix}-${slug}`;
+  if (format === "csv") {
+    const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [EXPORT_HEADERS.map(esc).join(","), ...rows.map(i => exportRow(i).map(esc).join(","))];
+    _download("﻿" + lines.join("\n"), `${base}.csv`, "text/csv;charset=utf-8");
+  } else {
+    const lines = [EXPORT_HEADERS.join("\t"), ...rows.map(i => exportRow(i).join("\t"))];
+    _download("﻿" + lines.join("\n"), `${base}.xls`, "text/tab-separated-values;charset=utf-8");
+  }
+}
+
+function exportExcel()       { exportList(filteredInscritos(), "filtrados"); }
+function exportCSV()         { exportList(filteredInscritos(), "filtrados", "csv"); }
+function exportTudo(fmt)     { exportList([...state.inscritos], "tudo", fmt); }
+function exportImpressos()   { exportList(state.inscritos.filter(i => i.impresso), "impressos"); }
+function exportPendentes()   { exportList(state.inscritos.filter(i => !i.impresso), "pendentes"); }
+function exportSelecionados() {
+  const rows = [...state.selectedIds].map(id => state.inscritos.find(i => i.id === id)).filter(Boolean);
+  exportList(rows, "selecionados");
 }
