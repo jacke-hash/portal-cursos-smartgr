@@ -479,6 +479,7 @@ h2 {
 .status-ausente        { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
 .status-remanejado     { background: #f3e8ff; color: #7e22ce; border-color: #e9d5ff; }
 .status-desistente     { background: #fce7f3; color: #be185d; border-color: #fbcfe8; }
+.status-cancelado      { background: #fef3c7; color: #92400e; border-color: #fde68a; }
 .status-reembolsado    { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
 
 /* ── NOTE INPUT ── */
