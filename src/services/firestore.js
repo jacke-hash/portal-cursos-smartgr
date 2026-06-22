@@ -6,7 +6,7 @@ import {
   query,
   serverTimestamp,
   updateDoc,
-  where
+  where,
 } from "firebase/firestore";
 import { db } from "./firebase.js";
 
@@ -37,6 +37,31 @@ export function listenEventos(cursoId, callback) {
     },
     (error) => {
       console.error("[Firestore] Erro em listenEventos:", error.code, error.message);
+    }
+  );
+}
+
+export function listenEncerrados(cursoId, callback) {
+  console.log(`[Firestore] listenEncerrados: cursoId=${cursoId}`);
+  const ref = collection(db, "cursos", cursoId, "eventos");
+  return onSnapshot(
+    query(ref, where("encerrado", "==", true)),
+    (snap) => {
+      console.log(`[Firestore] Encerrados encontrados (curso ${cursoId}):`, snap.size);
+      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // ordenação client-side: mais recente primeiro
+      docs.sort((a, b) => {
+        const da = a.data?.toDate?.() ?? null;
+        const db_ = b.data?.toDate?.() ?? null;
+        if (!da && !db_) return 0;
+        if (!da) return 1;
+        if (!db_) return -1;
+        return db_ - da;
+      });
+      callback(docs);
+    },
+    (error) => {
+      console.error("[Firestore] Erro em listenEncerrados:", error.code, error.message);
     }
   );
 }

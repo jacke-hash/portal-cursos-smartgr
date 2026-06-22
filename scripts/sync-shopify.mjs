@@ -173,6 +173,15 @@ function isConfirmado(status) {
   return status === 'Confirmado' || status === 'Presente';
 }
 
+// Evento encerrado quando a data de calendário é <= hoje (inclui o próprio dia)
+function isEventoEncerrado(date) {
+  if (!date) return false;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const evDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  return evDay <= hoje;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,8 +270,115 @@ async function sync() {
     }
   }
 
-  // ─── FASE 2: Pedidos e inscritos ──────────────────────────────────────────
-  console.log('\n=== FASE 2: Pedidos e inscritos ===');
+  // ─── FASE 2: Eventos das variantes Shopify ────────────────────────────────
+  console.log('\n=== FASE 2: Eventos das variantes Shopify ===');
+
+  let eventosCreated    = 0;
+  let eventosUpdated    = 0;
+  let eventosDesativados = 0;
+
+  for (const [productId, fallbackName] of KNOWN_COURSES) {
+    const nomeCurso = shopifyProductMap.get(productId)?.title || fallbackName;
+    const cursoRef  = db.collection('cursos').doc(String(productId));
+
+    console.log(`\n  ${nomeCurso} (${productId})`);
+
+    // 1. Variantes atuais no Shopify
+    let shopifyVariants = [];
+    try {
+      const { data: vData } = await shopifyGet(
+        `${SHOPIFY_BASE}/products/${productId}/variants.json?limit=250`
+      );
+      shopifyVariants = vData.variants || [];
+    } catch (e) {
+      console.log(`    ⚠ Erro ao buscar variantes Shopify: ${e.message}`);
+      continue;
+    }
+
+    // 2. Eventos existentes no Firestore para este produto
+    let eventosFS = [];
+    try {
+      const snap = await cursoRef.collection('eventos').get();
+      eventosFS = snap.docs.map(d => ({ ref: d.ref, id: d.id, ...d.data() }));
+    } catch (e) {
+      console.log(`    ⚠ Erro ao ler Firestore: ${e.message}`);
+    }
+
+    const shopifyVariantIds = new Set(shopifyVariants.map(v => String(v.id)));
+    console.log(`    Variantes no Shopify : ${shopifyVariants.length}`);
+    console.log(`    Eventos no Firestore : ${eventosFS.length}`);
+
+    // 3. Criar/atualizar evento para cada variante do Shopify
+    for (const variant of shopifyVariants) {
+      const variantId    = String(variant.id);
+      const variantTitle = variant.title || '';
+
+      const parsed = parseVariantTitle(variantTitle);
+      if (!parsed) {
+        console.log(`    - ignorada (título inválido): "${variantTitle}"`);
+        continue;
+      }
+
+      const { date } = parsed;
+
+      // Corte de data: variante com data anterior ao cutoff não gera evento
+      if (date !== null && date < DATE_CUTOFF) {
+        console.log(`    - ignorada (data anterior ao corte): "${variantTitle}"`);
+        continue;
+      }
+
+      const encerrado = isEventoEncerrado(date);
+      const eventoRef = cursoRef.collection('eventos').doc(variantId);
+      const jaExiste  = eventosFS.some(ev => ev.id === variantId);
+
+      try {
+        await eventoRef.set(
+          {
+            varianteTitle: variantTitle,
+            varianteId:    variantId,
+            data:          date ? Timestamp.fromDate(date) : null,
+            ativo:         !encerrado,
+            encerrado,
+            updatedAt:     Timestamp.now(),
+          },
+          { merge: true }   // preserva totalInscritos/confirmados existentes
+        );
+
+        if (jaExiste) {
+          eventosUpdated++;
+          console.log(`    ✓ atualizado: "${variantTitle}"${encerrado ? ' [encerrado]' : ''}`);
+        } else {
+          eventosCreated++;
+          console.log(`    + criado: "${variantTitle}"${encerrado ? ' [encerrado]' : ''}`);
+        }
+      } catch (e) {
+        console.log(`    ✗ erro ao gravar evento ${variantId}: ${e.message}`);
+      }
+    }
+
+    // 4. Desativar eventos órfãos (no Firestore mas ausentes no Shopify)
+    const orfaos = eventosFS.filter(ev => !shopifyVariantIds.has(ev.id));
+    if (orfaos.length) {
+      console.log(`    Desativando ${orfaos.length} evento(s) órfão(s)...`);
+    }
+    for (const ev of orfaos) {
+      try {
+        await ev.ref.update({ ativo: false, encerrado: true, updatedAt: Timestamp.now() });
+        eventosDesativados++;
+        const dl = ev.data?.toDate?.()
+          ?.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          || 'sem data';
+        console.log(`    ✗ desativado (órfão): [${dl}] "${ev.varianteTitle || ev.id}"`);
+      } catch (e) {
+        console.log(`    ✗ erro ao desativar ${ev.id}: ${e.message}`);
+      }
+    }
+  }
+
+  console.log(`\nEventos: ${eventosCreated} criados | ${eventosUpdated} atualizados | ${eventosDesativados} desativados`);
+
+  // ─── FASE 3: Pedidos e inscritos ──────────────────────────────────────────
+  console.log('\n=== FASE 3: Pedidos e inscritos ===');
 
   console.log('Buscando pedidos pagos...');
   const paidOrders = await fetchAllPages(
@@ -290,8 +406,6 @@ async function sync() {
   console.log(`\nTotal de pedidos: ${allOrders.length}`);
   console.log(`Pedidos ativos (não cancelados): ${activeOrders.length}`);
 
-  // variantMap: `${productId}:${variantId}` → { productId, variantId, varianteTitle, date }
-  const variantMap = new Map();
   let totalInscritos = 0;
   let inscritosIgnorados = 0;
 
@@ -339,16 +453,6 @@ async function sync() {
       if (parsed.date !== null && parsed.date < DATE_CUTOFF) {
         inscritosIgnorados++;
         continue;
-      }
-
-      const mapKey = `${productId}:${variantId}`;
-      if (!variantMap.has(mapKey)) {
-        variantMap.set(mapKey, {
-          productId,
-          variantId,
-          varianteTitle: variantTitle,
-          date: parsed.date,   // pode ser null para variantes sem data
-        });
       }
 
       // ── Cálculo financeiro real ─────────────────────────────────────────────
@@ -475,45 +579,32 @@ async function sync() {
   console.log(`\nInscritos gravados/atualizados: ${totalInscritos}`);
   console.log(`Inscritos ignorados (data passada / sem variante): ${inscritosIgnorados}`);
 
-  // ─── FASE 3: Agregados de eventos ─────────────────────────────────────────
-  console.log('\n=== FASE 3: Agregados de eventos ===');
+  // ─── FASE 4: Agregados de eventos ─────────────────────────────────────────
+  console.log('\n=== FASE 4: Agregados de eventos ===');
 
-  for (const [, varInfo] of variantMap) {
-    const { productId, variantId, varianteTitle, date } = varInfo;
-    const eventoRef = db
-      .collection('cursos').doc(String(productId))
-      .collection('eventos').doc(variantId);
-
+  let eventosAgregados = 0;
+  for (const productId of KNOWN_COURSES.keys()) {
+    const cursoRef = db.collection('cursos').doc(String(productId));
     try {
-      const inscritosSnap = await eventoRef.collection('inscritos').get();
-      const totalEvento = inscritosSnap.size;
-      const confirmados = inscritosSnap.docs.filter(
-        d => isConfirmado(d.data().status)
-      ).length;
-
-      await eventoRef.set(
-        {
-          varianteTitle,
-          varianteId: variantId,
-          // Variantes sem data (Lote 1, VIP…) gravam null — não quebra o Firestore
-          data: date ? Timestamp.fromDate(date) : null,
-          ativo: true,
-          totalInscritos: totalEvento,
-          confirmados,
-          updatedAt: Timestamp.now(),
-        },
-        { merge: true }
-      );
+      const eventosSnap = await cursoRef.collection('eventos').get();
+      for (const eventoDoc of eventosSnap.docs) {
+        const inscritosSnap = await eventoDoc.ref.collection('inscritos').get();
+        const total        = inscritosSnap.size;
+        const confirmados  = inscritosSnap.docs.filter(
+          d => isConfirmado(d.data().status)
+        ).length;
+        await eventoDoc.ref.update({ totalInscritos: total, confirmados, updatedAt: Timestamp.now() });
+        eventosAgregados++;
+      }
     } catch (e) {
-      console.log(`  Erro ao atualizar evento ${variantId}: ${e.message}`);
+      console.log(`  Erro ao agregar eventos do produto ${productId}: ${e.message}`);
     }
   }
+  console.log(`Eventos com agregados atualizados: ${eventosAgregados}`);
 
-  console.log(`Eventos atualizados: ${variantMap.size}`);
-
-  // ─── FASE 4: Agregados de cursos ──────────────────────────────────────────
+  // ─── FASE 5: Agregados de cursos ──────────────────────────────────────────
   // Itera sobre TODOS os 14 IDs, não apenas os que tiveram inscritos nesta sync
-  console.log('\n=== FASE 4: Agregados de cursos ===');
+  console.log('\n=== FASE 5: Agregados de cursos ===');
 
   const agora = new Date();
 
@@ -566,9 +657,12 @@ async function sync() {
   }
 
   console.log('\n--- Resumo ---');
-  console.log(`Cursos processados: ${cursosSincronizados}`);
-  console.log(`Eventos processados: ${variantMap.size}`);
-  console.log(`Inscritos processados: ${totalInscritos}`);
+  console.log(`Cursos processados    : ${cursosSincronizados}`);
+  console.log(`Eventos criados       : ${eventosCreated}`);
+  console.log(`Eventos atualizados   : ${eventosUpdated}`);
+  console.log(`Eventos desativados   : ${eventosDesativados}`);
+  console.log(`Eventos com agregados : ${eventosAgregados}`);
+  console.log(`Inscritos processados : ${totalInscritos}`);
   console.log('\n=== Sincronização concluída com sucesso! ===');
   console.log(`Fim: ${new Date().toISOString()}`);
 }

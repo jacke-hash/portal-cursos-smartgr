@@ -1,8 +1,9 @@
 import {
   listenCursos,
+  listenEncerrados,
   listenEventos,
   listenInscritos,
-  updateInscrito
+  updateInscrito,
 } from "../services/firestore.js";
 import { formatDate, formatSync, money, statusClass } from "../utils/format.js";
 
@@ -31,6 +32,28 @@ function normalize(str) {
     .normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
+// Extrai Date de qualquer formato que o Firestore possa entregar
+function extractEventDate(raw) {
+  if (!raw) return null;
+  if (typeof raw.toDate === "function") return raw.toDate();
+  if (raw instanceof Date) return isNaN(raw) ? null : raw;
+  if (typeof raw.seconds === "number") {
+    return new Date(raw.seconds * 1000 + Math.round((raw.nanoseconds || 0) / 1e6));
+  }
+  if (typeof raw === "string") { const d = new Date(raw); return isNaN(d) ? null : d; }
+  return null;
+}
+
+// Evento encerrado quando a DATA DE CALENDÁRIO é <= hoje (inclui eventos do dia atual)
+function isEventoPast(evento) {
+  const d = extractEventDate(evento.data);
+  if (!d) return false;
+  const today = new Date();
+  const evDay    = new Date(d.getFullYear(),     d.getMonth(),     d.getDate());
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return evDay <= todayDay;
+}
+
 function valorPago(inscrito) {
   return inscrito.valorFinalPago ?? inscrito.valorLiquidoPago ?? inscrito.valor ?? 0;
 }
@@ -52,7 +75,6 @@ function saveNav() {
       eventoId: state.evento?.id || null,
       eventoSearch: state.eventoSearch,
       search: state.search,
-      showPastEventos: state.showPastEventos,
       filters: state.filters,
       sortKey: state.sortKey,
       sortDir: state.sortDir,
@@ -74,7 +96,8 @@ function loadNav() {
 let state = {
   route: "cursos",
   cursos: [],
-  eventos: [],
+  eventos: [],      // ativo: true  (futuros)
+  encerrados: [],   // encerrado: true (passados)
   inscritos: [],
   curso: null,
   evento: null,
@@ -87,8 +110,9 @@ let state = {
   page: 1
 };
 
-let unsubCursos = null;
-let unsubEventos = null;
+let unsubCursos    = null;
+let unsubEventos   = null;
+let unsubEncerrados = null;
 let unsubInscritos = null;
 let pendingRestore = null; // [alteração 2] aguarda dados do Firestore para restaurar
 let root;
@@ -141,12 +165,23 @@ function tryRestore() {
 
   state.curso = curso;
   state.route = "curso";
-  state.eventos = [];
+  state.eventos    = [];
+  state.encerrados = [];
   state.eventoSearch = saved.eventoSearch || "";
-  state.showPastEventos = saved.showPastEventos || false;
+  state.showPastEventos = false;
   state.page = 1;
 
-  if (unsubEventos) unsubEventos();
+  if (unsubEventos)    unsubEventos();
+  if (unsubEncerrados) unsubEncerrados();
+
+  // Encerrados carregados em paralelo para exibir o contador no botão
+  unsubEncerrados = listenEncerrados(curso.id, (encerrados) => {
+    state.encerrados = encerrados;
+    if (state.route === "curso") {
+      if (root.querySelector("#eventos-content")) cursoEventosPartialUpdate();
+      else render();
+    }
+  });
 
   const savedEventoId = saved.eventoId;
   const savedRoute = saved.route;
@@ -305,27 +340,16 @@ function dedupeEventos(eventos) {
   return [...seen.values()];
 }
 
-// [alteração 1] Separa eventos futuros e encerrados; aplica dedup e busca
+// Usa os arrays já classificados pelo Firestore (ativo/encerrado)
 function computeEventoSections() {
-  const agora = new Date();
-  const deduped = dedupeEventos(state.eventos);
-  const sorted = [...deduped].sort((a, b) => {
-    const da = a.data?.toDate?.() ?? null;
-    const db = b.data?.toDate?.() ?? null;
-    if (!da && !db) return 0;
-    if (!da) return 1;
-    if (!db) return -1;
-    return da - db;
-  });
+  // state.eventos   = ativo: true  (futuros) — já ordenados por data asc pelo Firestore
+  // state.encerrados = encerrado: true (passados) — ordenados por data desc (client-side)
+  const future = dedupeEventos(state.eventos);
+  const past   = dedupeEventos(state.encerrados);
 
-  const past = sorted.filter(e => {
-    const d = e.data?.toDate?.() ?? null;
-    return d !== null && d < agora;
-  });
-  const future = sorted.filter(e => {
-    const d = e.data?.toDate?.() ?? null;
-    return d === null || d >= agora;
-  });
+  console.log("[SmartGR] Eventos totais:", future.length + past.length);
+  console.log("[SmartGR] Eventos futuros:", future.length);
+  console.log("[SmartGR] Eventos encerrados:", past.length);
 
   const q = normalize(state.eventoSearch.trim());
   const applySearch = list => q
@@ -334,8 +358,8 @@ function computeEventoSections() {
 
   return {
     future: applySearch(future),
-    past: applySearch(past),
-    pastCount: past.length,
+    past:   applySearch(past),
+    pastCount:   past.length,
     futureCount: future.length,
   };
 }
@@ -386,9 +410,9 @@ function cursoView() {
 }
 
 function eventoCard(evento) {
-  const agora = new Date();
-  const evDate = evento.data?.toDate?.() ?? null;
-  const isPast = evDate !== null && evDate < agora;
+  const evDate = extractEventDate(evento.data);
+  // Usa o campo Firestore quando disponível; fallback para comparação de data
+  const isPast = evento.encerrado === true || isEventoPast(evento);
   const dateLabel = evDate
     ? evDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
     : "";
@@ -816,13 +840,15 @@ function handleChange(e) {
 // [alteração 7] saveNav() em todas as transições preserva contexto após F5
 
 function goToCursos() {
-  if (unsubEventos) { unsubEventos(); unsubEventos = null; }
-  if (unsubInscritos) { unsubInscritos(); unsubInscritos = null; }
+  if (unsubEventos)    { unsubEventos();    unsubEventos    = null; }
+  if (unsubEncerrados) { unsubEncerrados(); unsubEncerrados = null; }
+  if (unsubInscritos)  { unsubInscritos();  unsubInscritos  = null; }
   state.route = "cursos";
   state.curso = null;
   state.evento = null;
-  state.eventos = [];
-  state.inscritos = [];
+  state.eventos    = [];
+  state.encerrados = [];
+  state.inscritos  = [];
   state.search = "";
   state.eventoSearch = "";
   state.showPastEventos = false;
@@ -837,24 +863,38 @@ function openCurso(cursoId) {
   if (!curso) return;
   state.curso = curso;
   state.route = "curso";
-  state.eventos = [];
+  state.eventos    = [];
+  state.encerrados = [];
   state.search = "";
   state.eventoSearch = "";
   state.showPastEventos = false;
   state.page = 1;
   saveNav();
-  if (unsubEventos) unsubEventos();
-  // [alteração 4] snapshot do Firestore → partial update sem perder contexto
+
+  if (unsubEventos)    unsubEventos();
+  if (unsubEncerrados) unsubEncerrados();
+
+  function onEventosUpdate() {
+    if (state.route !== "curso") return;
+    if (root.querySelector("#eventos-content")) {
+      cursoEventosPartialUpdate();
+    } else {
+      render();
+    }
+  }
+
+  // Futuros: ativo === true
   unsubEventos = listenEventos(cursoId, (eventos) => {
     state.eventos = eventos;
-    if (state.route === "curso") {
-      if (root.querySelector("#eventos-content")) {
-        cursoEventosPartialUpdate();
-      } else {
-        render();
-      }
-    }
+    onEventosUpdate();
   });
+
+  // Encerrados: encerrado === true (sempre carregado para exibir o contador)
+  unsubEncerrados = listenEncerrados(cursoId, (encerrados) => {
+    state.encerrados = encerrados;
+    onEventosUpdate();
+  });
+
   render();
 }
 
