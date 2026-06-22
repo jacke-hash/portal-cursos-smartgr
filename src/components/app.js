@@ -6,6 +6,7 @@ import {
   updateInscrito,
 } from "../services/firestore.js";
 import { formatDate, formatSync, money, statusClass } from "../utils/format.js";
+import { icon } from "../utils/icons.js";
 
 const LOGO = "https://cdn.shopify.com/s/files/1/0727/8480/6045/files/logo_smart_gr_-_azul.svg?v=1773686608";
 
@@ -457,7 +458,6 @@ function eventoView() {
   const totalPages = Math.ceil(inscritos.length / PAGE_SIZE);
   const vendedores = [...new Set(state.inscritos.map(i => i.vendedor).filter(Boolean))];
   const variantes = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
-  const variantesFiltradas = new Set(inscritos.map(i => i.variante).filter(Boolean)).size;
   const stats = inscritosStats();
 
   return `
@@ -467,45 +467,50 @@ function eventoView() {
         <h2>${state.evento.varianteTitle || state.evento.id}</h2>
       </div>
       <div class="export-btns">
-        <button class="btn-export" data-action="export-excel">Exportar Excel</button>
-        <button class="btn-export" data-action="export-csv">Exportar CSV</button>
+        <button class="btn-export" data-action="export-excel">${icon.fileSpreadsheet()} Exportar Excel</button>
+        <button class="btn-export" data-action="export-csv">${icon.fileText()} Exportar CSV</button>
       </div>
     </section>
 
-    <div class="summary-bar" id="summary-bar">
-      ${summaryCard("Participantes", inscritos.length)}
-      ${summaryCard("Variantes", variantesFiltradas)}
-      ${summaryCard("Impressos", inscritos.filter(i => i.impresso === true).length)}
-      ${summaryCard("Pendentes", inscritos.filter(i => !i.impresso).length)}
-    </div>
-
     <div class="stats-bar" id="stats-bar">
-      ${statCard("Total geral", stats.total)}
-      ${statCard("Confirmados", stats.confirmados)}
-      ${statCard("Não confirmados", stats.naoConfirmados)}
-      ${statCard("Presentes", stats.presentes)}
-      ${statCard("Ausentes", stats.ausentes)}
-      ${statCard("Desistentes", stats.desistentes)}
-      ${statCard("Cancelados", stats.cancelados)}
-      ${statCard("Reembolsados", stats.reembolsados)}
+      ${statCard("Total Geral",      stats.total,          "",               icon.users())}
+      ${statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle())}
+      ${statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3())}
+      ${statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin())}
+      ${statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX())}
+      ${statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus())}
+      ${statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle())}
+      ${statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet())}
     </div>
 
     <div class="filters-bar">
-      <input class="search" data-action="search" placeholder="Buscar pedido, nome, email, CPF..." value="${state.search}">
-      <select data-filter="status">
-        <option value="">Todos os status</option>
-        ${STATUSES.map(s => `<option value="${s}" ${state.filters.status === s ? "selected" : ""}>${s}</option>`).join("")}
-      </select>
-      <select data-filter="vendedor">
-        <option value="">Todos os vendedores</option>
-        ${vendedores.map(v => `<option value="${v}" ${state.filters.vendedor === v ? "selected" : ""}>${v}</option>`).join("")}
-      </select>
-      <select data-filter="variante">
-        <option value="">Todas as variantes</option>
-        ${variantes.map(v => `<option value="${v}" ${state.filters.variante === v ? "selected" : ""}>${v}</option>`).join("")}
-      </select>
+      <div class="filter-wrap filter-wrap--grow">
+        <span class="filter-icon">${icon.search()}</span>
+        <input class="search" data-action="search" placeholder="Buscar pedido, nome, email, CPF, telefone, vendedor, cidade..." value="${state.search}">
+      </div>
+      <div class="filter-wrap">
+        <span class="filter-icon">${icon.filter()}</span>
+        <select data-filter="status">
+          <option value="">Todos os status</option>
+          ${STATUSES.map(s => `<option value="${s}" ${state.filters.status === s ? "selected" : ""}>${s}</option>`).join("")}
+        </select>
+      </div>
+      <div class="filter-wrap">
+        <span class="filter-icon">${icon.userRound()}</span>
+        <select data-filter="vendedor">
+          <option value="">Todos os vendedores</option>
+          ${vendedores.map(v => `<option value="${v}" ${state.filters.vendedor === v ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+      </div>
+      <div class="filter-wrap">
+        <span class="filter-icon">${icon.mapPinned()}</span>
+        <select data-filter="variante">
+          <option value="">Todas as variantes</option>
+          ${variantes.map(v => `<option value="${v}" ${state.filters.variante === v ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+      </div>
       <select data-filter="impresso">
-        <option value="">Todos</option>
+        <option value="">Impressos: todos</option>
         <option value="true" ${state.filters.impresso === "true" ? "selected" : ""}>Somente Impressos</option>
         <option value="false" ${state.filters.impresso === "false" ? "selected" : ""}>Somente Pendentes</option>
       </select>
@@ -544,12 +549,14 @@ function eventoView() {
   `;
 }
 
-function statCard(label, value) {
-  return `<div class="stat-card"><span class="stat-label">${label}</span><b class="stat-value">${value}</b></div>`;
-}
-
-function summaryCard(label, value) {
-  return `<div class="summary-card"><span class="summary-label">${label}</span><b class="summary-value">${value}</b></div>`;
+function statCard(label, value, variant = "", iconHtml = "") {
+  const cls = variant ? ` stat-card--${variant}` : "";
+  return `
+    <div class="stat-card${cls}">
+      <div class="stat-icon">${iconHtml}</div>
+      <b class="stat-value">${value}</b>
+      <span class="stat-label">${label}</span>
+    </div>`;
 }
 
 function th(key, label) {
@@ -614,7 +621,7 @@ function filteredInscritos() {
     const q = normalize(state.search);
     list = list.filter(i =>
       [i.pedido, i.cliente, i.email, i.cpf, i.telefone,
-       i.cidade, i.estado, i.variante, formatDate(i.dataCompra)]
+       i.cidade, i.estado, i.variante, i.vendedor, formatDate(i.dataCompra)]
         .some(v => normalize(v).includes(q))
     );
   }
@@ -649,31 +656,22 @@ function eventoViewPartialUpdate() {
   const inscritos = filteredInscritos();
   const paginated = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
   const totalPages = Math.ceil(inscritos.length / PAGE_SIZE);
-  const variantesFiltradas = new Set(inscritos.map(i => i.variante).filter(Boolean)).size;
   const stats = inscritosStats();
 
-  const summaryBar     = root.querySelector("#summary-bar");
   const statsBar       = root.querySelector("#stats-bar");
   const resultsCount   = root.querySelector("#results-count");
   const tbody          = root.querySelector("#inscritos-tbody");
   const paginationWrap = root.querySelector("#pagination-wrap");
 
-  if (summaryBar) summaryBar.innerHTML =
-    summaryCard("Participantes", inscritos.length) +
-    summaryCard("Variantes", variantesFiltradas) +
-    summaryCard("Impressos", inscritos.filter(i => i.impresso === true).length) +
-    summaryCard("Pendentes", inscritos.filter(i => !i.impresso).length);
-
-  // [alteração 6] Cancelados e Reembolsados agora aparecem nas stats
   if (statsBar) statsBar.innerHTML =
-    statCard("Total geral", stats.total) +
-    statCard("Confirmados", stats.confirmados) +
-    statCard("Não confirmados", stats.naoConfirmados) +
-    statCard("Presentes", stats.presentes) +
-    statCard("Ausentes", stats.ausentes) +
-    statCard("Desistentes", stats.desistentes) +
-    statCard("Cancelados", stats.cancelados) +
-    statCard("Reembolsados", stats.reembolsados);
+    statCard("Total Geral",      stats.total,          "",               icon.users()) +
+    statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle()) +
+    statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3()) +
+    statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin()) +
+    statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX()) +
+    statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus()) +
+    statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle()) +
+    statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet());
 
   if (resultsCount) resultsCount.textContent = `${inscritos.length} inscritos encontrados`;
 
