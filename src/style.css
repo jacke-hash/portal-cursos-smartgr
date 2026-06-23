@@ -372,13 +372,13 @@ h2 {
 /* ── FILTERS BAR ── */
 .filters-bar {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   align-items: center;
   margin-bottom: 14px;
 }
 
-/* wrapper com ícone posicionado */
+/* Wrapper para campo de busca (mantém ícone de lupa posicionado) */
 .filter-wrap {
   position: relative;
   display: flex;
@@ -396,22 +396,31 @@ h2 {
   z-index: 1;
 }
 
-.filter-wrap .search,
-.filter-wrap select {
+/* Apenas o input de busca recebe padding extra para o ícone de lupa */
+.filter-wrap .search {
   padding-left: 32px;
 }
 
-.filters-bar select {
-  height: 42px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+/* Selects dos filtros — sem ícone SVG, seta nativa do navegador */
+.filter-select {
+  height: 44px;
+  padding: 0 36px 0 12px;   /* espaço à direita para a seta nativa */
+  border: 1px solid #dbe3f0;
+  border-radius: 12px;
   background: var(--white);
   color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  appearance: auto;          /* seta nativa — sem duplicação */
+  min-width: 150px;
   transition: border-color .15s, box-shadow .15s;
 }
-.filters-bar select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(36,83,136,.1); }
+.filter-select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(36,83,136,.1);
+}
 
 .btn-clear {
   height: 42px;
@@ -879,7 +888,7 @@ h2 {
     align-items: stretch;
   }
   .filters-bar.filters-open { display: flex; }
-  .filters-bar select,
+  .filter-select,
   .filters-bar .filter-wrap { width: 100%; }
   .filter-wrap--grow { min-width: unset; }
 

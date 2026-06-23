@@ -479,28 +479,19 @@ function _filtersBar(vendedores, variantes) {
         <span class="filter-icon">${icon.search()}</span>
         <input class="search" data-action="search" placeholder="Buscar pedido, nome, email, CPF, telefone, vendedor, cidade..." value="${state.search}">
       </div>
-      <div class="filter-wrap">
-        <span class="filter-icon">${icon.filter()}</span>
-        <select data-filter="status">
-          <option value="">Todos os status</option>
-          ${STATUSES.map(s => `<option value="${s}" ${state.filters.status === s ? "selected" : ""}>${s}</option>`).join("")}
-        </select>
-      </div>
-      <div class="filter-wrap">
-        <span class="filter-icon">${icon.userRound()}</span>
-        <select data-filter="vendedor">
-          <option value="">Todos os vendedores</option>
-          ${vendedores.map(v => `<option value="${v}" ${state.filters.vendedor === v ? "selected" : ""}>${v}</option>`).join("")}
-        </select>
-      </div>
-      <div class="filter-wrap">
-        <span class="filter-icon">${icon.mapPinned()}</span>
-        <select data-filter="variante">
-          <option value="">Todas as variantes</option>
-          ${variantes.map(v => `<option value="${v}" ${state.filters.variante === v ? "selected" : ""}>${v}</option>`).join("")}
-        </select>
-      </div>
-      <select data-filter="impresso">
+      <select class="filter-select" data-filter="status">
+        <option value="">Todos os status</option>
+        ${STATUSES.map(s => `<option value="${s}" ${state.filters.status === s ? "selected" : ""}>${s}</option>`).join("")}
+      </select>
+      <select class="filter-select" data-filter="vendedor">
+        <option value="">Todos os vendedores</option>
+        ${vendedores.map(v => `<option value="${v}" ${state.filters.vendedor === v ? "selected" : ""}>${v}</option>`).join("")}
+      </select>
+      <select class="filter-select" data-filter="variante">
+        <option value="">Todas as variantes</option>
+        ${variantes.map(v => `<option value="${v}" ${state.filters.variante === v ? "selected" : ""}>${v}</option>`).join("")}
+      </select>
+      <select class="filter-select" data-filter="impresso">
         <option value="">Impressos: todos</option>
         <option value="true" ${state.filters.impresso === "true" ? "selected" : ""}>Somente Impressos</option>
         <option value="false" ${state.filters.impresso === "false" ? "selected" : ""}>Somente Pendentes</option>

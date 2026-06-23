@@ -202,10 +202,17 @@ function nomesBatem(nome1, nome2) {
 // INICIALIZAÇÃO FIREBASE
 // ----------------------------------------------------------------
 
+function lerServiceAccount() {
+  // Prioridade 1: variável de ambiente com o JSON direto (GitHub Actions / Render)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  }
+  // Prioridade 2: arquivo local (desenvolvimento)
+  return JSON.parse(readFileSync(CONFIG.FIREBASE_SERVICE_ACCOUNT, 'utf8'));
+}
+
 function inicializarFirebase() {
-  const serviceAccount = JSON.parse(
-    readFileSync(CONFIG.FIREBASE_SERVICE_ACCOUNT, 'utf8')
-  );
+  const serviceAccount = lerServiceAccount();
 
   initializeApp({
     credential: cert(serviceAccount),
@@ -219,9 +226,7 @@ function inicializarFirebase() {
 // ----------------------------------------------------------------
 
 async function inicializarSheets() {
-  const serviceAccount = JSON.parse(
-    readFileSync(CONFIG.GOOGLE_SERVICE_ACCOUNT, 'utf8')
-  );
+  const serviceAccount = lerServiceAccount();
 
   const auth = new google.auth.GoogleAuth({
     credentials: serviceAccount,
