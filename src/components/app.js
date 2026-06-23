@@ -281,12 +281,32 @@ function render() {
 
 // ─── VIEWS ───────────────────────────────────────────────────────────────────
 
+// Extrai Date do campo proximoEventoLabel ("DD/MM/YYYY - Local")
+// Retorna null se o curso não tiver próximo evento ou o formato não bater
+function parseProximoData(label) {
+  if (!label) return null;
+  const m = label.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (!m) return null;
+  return new Date(+m[3], +m[2] - 1, +m[1]);
+}
+
 function filteredCursos() {
-  if (!state.search) return state.cursos;
-  const q = normalize(state.search);
-  return state.cursos.filter(c =>
-    normalize(c.nome).includes(q) || normalize(c.proximoEventoLabel).includes(q)
-  );
+  let list = state.cursos;
+  if (state.search) {
+    const q = normalize(state.search);
+    list = list.filter(c =>
+      normalize(c.nome).includes(q) || normalize(c.proximoEventoLabel).includes(q)
+    );
+  }
+  // Ordenação: menor data futura primeiro; sem próximo evento por último
+  return [...list].sort((a, b) => {
+    const da = parseProximoData(a.proximoEventoLabel);
+    const db = parseProximoData(b.proximoEventoLabel);
+    if (da && db) return da - db;
+    if (da) return -1;   // a tem data, b não → a vem antes
+    if (db) return 1;    // b tem data, a não → b vem antes
+    return 0;            // ambos sem data → ordem original
+  });
 }
 
 function courseGridContent() {
@@ -299,7 +319,7 @@ function cursosView() {
     <section class="page-head">
       <div>
         <p class="eyebrow">Portal operacional</p>
-        <h1>SMARTGR CURSOS</h1>
+        <h1>RELAÇÃO DE INSCRITOS</h1>
       </div>
       <input class="search" data-action="search-cursos" placeholder="Buscar curso..." value="${state.search}">
     </section>
@@ -310,16 +330,16 @@ function cursosView() {
 }
 
 function courseCard(curso) {
-  const total = curso.totalInscritos || 0;
-  const pendentes = curso.credenciaisPendentes || 0;
+  const proximoLabel = curso.proximoEventoLabel;
+  const proximoHtml = proximoLabel
+    ? `<b>${proximoLabel}</b>`
+    : `<span class="badge-sem-evento">Sem eventos programados</span>`;
   return `
     <button class="course-card" data-action="open-curso" data-curso-id="${curso.id}">
       <strong>${curso.nome}</strong>
       <div class="card-meta">
-        <span><b>${total}</b> inscritos</span>
-        <span>Próximo: <b>${curso.proximoEventoLabel || "--"}</b></span>
+        <span>Próximo evento: ${proximoHtml}</span>
         <span>Sync: <b>${formatSync(curso.updatedAt)}</b></span>
-        <span class="${pendentes ? "badge-warn" : "badge-ok"}">${pendentes} pendentes</span>
       </div>
     </button>
   `;

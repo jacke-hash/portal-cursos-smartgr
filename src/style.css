@@ -583,8 +583,9 @@ h2 {
 }
 
 /* ── BADGES ── */
-.badge-warn { color: #b45309; font-weight: 600; }
-.badge-ok   { color: #15803d; font-weight: 600; }
+.badge-warn      { color: #b45309; font-weight: 600; }
+.badge-ok        { color: #15803d; font-weight: 600; }
+.badge-sem-evento { color: var(--muted); font-style: italic; }
 
 /* ── EMPTY ── */
 .empty {
