@@ -18,12 +18,9 @@ export function formatShortDate(value) {
 export function formatSync(value) {
   if (!value) return "--";
   const date = value.toDate ? value.toDate() : new Date(value);
-  return date.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  const datePart = date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const timePart = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return `${datePart} às ${timePart}`;
 }
 
 export function statusClass(status) {

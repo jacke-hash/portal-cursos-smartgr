@@ -138,33 +138,45 @@ h2 {
   background: var(--white);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 24px;
+  padding: 20px 22px;
   text-align: left;
   transition: box-shadow .15s, border-color .15s;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  justify-content: space-between;
+  gap: 20px;
 }
 .course-card:hover {
   border-color: var(--blue);
   box-shadow: 0 4px 24px rgba(56,83,132,.1);
 }
-.course-card strong {
-  font-size: 16px;
+
+.course-name {
+  font-size: 15px;
   font-weight: 700;
   color: var(--ink);
+  line-height: 1.4;
 }
 
-.card-meta {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+.card-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
 }
-.card-meta span {
-  font-size: 12px;
+.card-updated-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
   color: var(--muted);
 }
-.card-meta b { color: var(--ink); }
+.card-updated-value {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
 
 /* ── EVENTOS TOOLBAR (busca + toggle) ── */
 .eventos-toolbar {
@@ -592,9 +604,8 @@ h2 {
 }
 
 /* ── BADGES ── */
-.badge-warn      { color: #b45309; font-weight: 600; }
-.badge-ok        { color: #15803d; font-weight: 600; }
-.badge-sem-evento { color: var(--muted); font-style: italic; }
+.badge-warn { color: #b45309; font-weight: 600; }
+.badge-ok   { color: #15803d; font-weight: 600; }
 
 /* ── EMPTY ── */
 .empty {

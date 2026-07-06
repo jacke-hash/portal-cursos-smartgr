@@ -40,6 +40,7 @@ const KNOWN_COURSES = new Map([
   [8957017981085, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
   [8956248555677, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
   [8956141568157, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Caxias do Sul'],
+  [8680460517533, 'Treinamento Presencial Limpeza de Pele'],
 ]);
 
 const VALID_PRODUCT_IDS = new Set(KNOWN_COURSES.keys());
