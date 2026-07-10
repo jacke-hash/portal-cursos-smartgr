@@ -920,3 +920,73 @@ h2 {
   .stats-bar { grid-template-columns: 1fr 1fr; }
   .export-dropdown { right: auto; left: 0; }
 }
+
+/* ── INSCRITOS INATIVOS (cancelado, reembolsado, expirado, etc.) ── */
+
+/* Linha de tabela com opacidade reduzida */
+.row-inativo { opacity: 0.58; }
+.row-inativo td { background: #fafafa !important; }
+
+/* Nome riscado na coluna de cliente (tabela) */
+.td-nome-inativo {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+/* Nome riscado no card mobile */
+.nome-inativo {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+/* Card mobile inativo */
+.mobile-card--inactive {
+  opacity: 0.58;
+  border-style: dashed;
+}
+
+/* Badge de status para inscritos inativos (substitui o select editável) */
+.status-inactive-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+/* Cores dos novos status inativos — para o badge e para o select (compatibilidade) */
+.status-expirado {
+  background: #fff7ed; color: #c2410c; border-color: #fed7aa;
+}
+.status-pendente {
+  background: #fffbeb; color: #d97706; border-color: #fde68a;
+}
+.status-autorizado {
+  background: #f0f9ff; color: #0369a1; border-color: #bae6fd;
+}
+.status-anulado {
+  background: #f9fafb; color: #374151; border-color: #d1d5db;
+}
+.status-parcialmente-reembolsado {
+  background: #fdf4ff; color: #7e22ce; border-color: #e9d5ff;
+}
+
+/* Stat card — variantes de cor para novos tipos de inativo */
+.stat-card--expirado .stat-icon,
+.stat-card--expirado .stat-value { color: #c2410c; }
+
+.stat-card--pendente .stat-icon,
+.stat-card--pendente .stat-value { color: #d97706; }
+
+.stat-card--autorizado .stat-icon,
+.stat-card--autorizado .stat-value { color: #0369a1; }
+
+.stat-card--anulado .stat-icon,
+.stat-card--anulado .stat-value { color: #374151; }
+
+.stat-card--parcialmente-reembolsado .stat-icon,
+.stat-card--parcialmente-reembolsado .stat-value { color: #7e22ce; }

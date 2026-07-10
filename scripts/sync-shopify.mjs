@@ -51,6 +51,44 @@ const CRITICAL_IDS = [8695759601821, 8928830193821];
 // Ignorar variantes com data anterior a 01/06/2026
 const DATE_CUTOFF = new Date('2026-06-01T12:00:00.000Z');
 
+// Statuses derivados da Shopify que indicam inscrito inativo (não pago)
+const INACTIVE_STATUS_LABELS = new Set([
+  'Cancelado', 'Reembolsado', 'Parcialmente Reembolsado',
+  'Expirado', 'Pendente', 'Autorizado', 'Anulado',
+]);
+
+// Mapeia financial_status da Shopify → label operacional do portal
+function shopifyStatusLabel(financialStatus, cancelledAt) {
+  if (cancelledAt) return 'Cancelado';
+  const map = {
+    refunded:           'Reembolsado',
+    partially_refunded: 'Parcialmente Reembolsado',
+    pending:            'Pendente',
+    authorized:         'Autorizado',
+    expired:            'Expirado',
+    voided:             'Anulado',
+  };
+  return map[financialStatus] ?? null;
+}
+
+// Retorna o financialStatus canônico: usa o campo se existe; faz fallback pelo status
+function resolveFinancialStatus(data) {
+  if (data.financialStatus) return data.financialStatus;
+  if (data.status === 'Cancelado') return 'cancelled';
+  if (data.status === 'Reembolsado') return 'refunded';
+  if (data.status === 'Parcialmente Reembolsado') return 'partially_refunded';
+  if (data.status === 'Expirado') return 'expired';
+  if (data.status === 'Pendente') return 'pending';
+  if (data.status === 'Autorizado') return 'authorized';
+  if (data.status === 'Anulado') return 'voided';
+  return 'paid'; // assume pago se não há indicação de inativo
+}
+
+// Verdadeiro se o inscrito é considerado ativo (pago)
+function isAtivoData(data) {
+  return resolveFinancialStatus(data) === 'paid';
+}
+
 // --- Shopify Config ---
 
 const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -395,23 +433,30 @@ async function sync() {
   );
   console.log(`Refunded concluído: ${refundedOrders.length} pedido(s)`);
 
-  const allOrders = [
-    ...paidOrders.map(o => ({ ...o, _isRefunded: false })),
-    ...refundedOrders.map(o => ({ ...o, _isRefunded: true })),
-  ];
+  console.log('Buscando pedidos parcialmente reembolsados...');
+  const partialRefundedOrders = await fetchAllPages(
+    `${SHOPIFY_BASE}/orders.json?financial_status=partially_refunded&status=any&limit=250`,
+    d => d.orders || []
+  );
+  console.log(`Partially refunded concluído: ${partialRefundedOrders.length} pedido(s)`);
 
+  // Usa financial_status diretamente do objeto da Shopify (sem flag _isRefunded)
+  const allOrders = [...paidOrders, ...refundedOrders, ...partialRefundedOrders];
+
+  // Pedidos cancelados são processados pela reconciliação (Fase 6); aqui excluímos apenas
+  // para não criar inscritos duplicados com dados de pedidos já cancelados nesta fase.
   const activeOrders = allOrders.filter(
     o => o.cancel_reason === null || o.cancel_reason === undefined
   );
 
   console.log(`\nTotal de pedidos: ${allOrders.length}`);
-  console.log(`Pedidos ativos (não cancelados): ${activeOrders.length}`);
+  console.log(`Pedidos sem cancelamento: ${activeOrders.length}`);
 
   let totalInscritos = 0;
   let inscritosIgnorados = 0;
 
   for (const order of activeOrders) {
-    const isRefunded = order._isRefunded;
+    const orderFinancialStatus = order.financial_status || 'paid';
     const vendedor =
       order.note_attributes?.find(a => a.name === 'Affiliate')?.value || '';
 
@@ -514,6 +559,9 @@ async function sync() {
         valorFinalCalculado,
       });
 
+      const isAtivo = orderFinancialStatus === 'paid';
+      const statusLabel = shopifyStatusLabel(orderFinancialStatus, order.cancelled_at);
+
       try {
         if (snap.exists) {
           const updateData = {
@@ -537,10 +585,11 @@ async function sync() {
             cpf: '',
             vendedor,
             variante: variantTitle,
+            financialStatus: orderFinancialStatus,
             updatedAt: now,
           };
-          // Reembolso sempre força atualização do status
-          if (isRefunded) updateData.status = 'Reembolsado';
+          // Para inscritos não ativos, sobrescreve o status com o label da Shopify
+          if (!isAtivo && statusLabel) updateData.status = statusLabel;
           await inscritoRef.update(updateData);
         } else {
           await inscritoRef.set({
@@ -564,7 +613,8 @@ async function sync() {
             cpf: '',
             vendedor,
             variante: variantTitle,
-            status: isRefunded ? 'Reembolsado' : 'Não Confirmado',
+            financialStatus: orderFinancialStatus,
+            status: isAtivo ? 'Não Confirmado' : (statusLabel || 'Pendente'),
             observacao: '',
             createdAt: now,
             updatedAt: now,
@@ -590,9 +640,11 @@ async function sync() {
       const eventosSnap = await cursoRef.collection('eventos').get();
       for (const eventoDoc of eventosSnap.docs) {
         const inscritosSnap = await eventoDoc.ref.collection('inscritos').get();
-        const total        = inscritosSnap.size;
-        const confirmados  = inscritosSnap.docs.filter(
-          d => isConfirmado(d.data().status)
+        const allDocs = inscritosSnap.docs;
+        // Conta apenas inscritos ativos (pagos) para os agregados do portal
+        const total       = allDocs.filter(d => isAtivoData(d.data())).length;
+        const confirmados = allDocs.filter(
+          d => isAtivoData(d.data()) && isConfirmado(d.data().status)
         ).length;
         await eventoDoc.ref.update({ totalInscritos: total, confirmados, updatedAt: Timestamp.now() });
         eventosAgregados++;
@@ -644,6 +696,94 @@ async function sync() {
       console.log(`  Erro ao atualizar agregados do curso ${productId}: ${e.message}`);
     }
   }
+
+  // ─── FASE 6: Reconciliação de status ─────────────────────────────────────
+  // Garante que inscritos existentes reflitam o estado atual da Shopify,
+  // incluindo registros legados sem o campo financialStatus.
+  console.log('\n=== FASE 6: Reconciliação de Status ===');
+
+  // 1. Coleta todos os shopifyId presentes no Firestore
+  const shopifyIdToRefs = new Map(); // shopifyId → [{ ref, data }]
+  for (const productId of KNOWN_COURSES.keys()) {
+    const cRef = db.collection('cursos').doc(String(productId));
+    try {
+      const evSnap = await cRef.collection('eventos').get();
+      for (const evDoc of evSnap.docs) {
+        const inSnap = await evDoc.ref.collection('inscritos').get();
+        for (const inDoc of inSnap.docs) {
+          const data = inDoc.data();
+          if (!data.shopifyId) continue;
+          if (!shopifyIdToRefs.has(data.shopifyId)) shopifyIdToRefs.set(data.shopifyId, []);
+          shopifyIdToRefs.get(data.shopifyId).push({ ref: inDoc.ref, data });
+        }
+      }
+    } catch (e) {
+      console.log(`  Erro ao ler inscritos do produto ${productId}: ${e.message}`);
+    }
+  }
+
+  const distinctIds = [...shopifyIdToRefs.keys()];
+  console.log(`  ${distinctIds.length} shopifyId(s) únicos encontrados no Firestore`);
+
+  // 2. Busca o status atual de cada pedido na Shopify (em lotes de 250)
+  const shopifyStatusMap = new Map(); // orderId → { financial_status, cancelled_at }
+  const CHUNK_SIZE = 250;
+  for (let i = 0; i < distinctIds.length; i += CHUNK_SIZE) {
+    const chunk = distinctIds.slice(i, i + CHUNK_SIZE);
+    try {
+      const url = `${SHOPIFY_BASE}/orders.json?ids=${chunk.join(',')}&status=any&fields=id,financial_status,cancelled_at&limit=${CHUNK_SIZE}`;
+      const { data } = await shopifyGet(url);
+      for (const o of data.orders || []) {
+        shopifyStatusMap.set(String(o.id), {
+          financial_status: o.financial_status,
+          cancelled_at:     o.cancelled_at,
+        });
+      }
+    } catch (e) {
+      console.log(`  Erro ao buscar lote de pedidos Shopify: ${e.message}`);
+    }
+  }
+
+  // 3. Atualiza registros cujo financialStatus diverge do estado atual da Shopify
+  let reconciliados = 0;
+  let semAlteracao  = 0;
+  const now2 = Timestamp.now();
+
+  for (const [shopifyId, refs] of shopifyIdToRefs) {
+    const current = shopifyStatusMap.get(shopifyId);
+    if (!current) {
+      // Pedido não encontrado na Shopify (pode ter sido excluído) — ignorar
+      continue;
+    }
+
+    const shopifyFS  = current.cancelled_at ? 'cancelled' : current.financial_status;
+    const statusLabel = shopifyStatusLabel(current.financial_status, current.cancelled_at);
+
+    for (const { ref, data } of refs) {
+      const storedFS = resolveFinancialStatus(data);
+
+      if (storedFS === shopifyFS) {
+        semAlteracao++;
+        continue;
+      }
+
+      const patch = { financialStatus: shopifyFS, updatedAt: now2 };
+      // Atualiza status operacional para registros não pagos
+      if (shopifyFS !== 'paid' && statusLabel) patch.status = statusLabel;
+      // Para registros que voltaram a ser 'paid' (raro), apenas atualiza o financialStatus;
+      // o operador decide o status operacional manualmente.
+
+      try {
+        await ref.update(patch);
+        console.log(`  ✓ Reconciliado ${shopifyId}: ${storedFS} → ${shopifyFS}${statusLabel ? ` (${statusLabel})` : ''}`);
+        reconciliados++;
+      } catch (e) {
+        console.log(`  ✗ Erro ao reconciliar ${shopifyId}: ${e.message}`);
+      }
+    }
+  }
+
+  console.log(`Reconciliados: ${reconciliados} | Sem alteração: ${semAlteracao}`);
 
   // ─── Comparação final ─────────────────────────────────────────────────────
   console.log('\n=== Comparação Final ===');

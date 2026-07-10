@@ -8,7 +8,6 @@ const KNOWN_COURSES = new Map([
   [8821788180637, 'Treinamento Presencial - Protocolo Peptídeos'],
   [8701283827869, 'Terapias Médicas Baseadas em Eletroporação'],
   [8680458551453, 'Treinamento Presencial de Microagulhamento'],
-  [8955598438557, 'Presencial - Pocket Microagulhamento'],
   [8695759601821, 'SMART DAY'],
   [8928830193821, '8° Congresso'],
   [8958883791005, 'Smart Tecnologias - Atualização sobre equipamentos na Medicina Estética'],
@@ -24,6 +23,34 @@ const KNOWN_COURSES = new Map([
 const VALID_PRODUCT_IDS = new Set(KNOWN_COURSES.keys());
 const DATE_CUTOFF = new Date('2026-06-01T12:00:00.000Z');
 const SHOPIFY_STORE = 'smart-gr-pro.myshopify.com';
+
+// Mapeia financial_status da Shopify para label operacional do portal.
+// Retorna null para 'paid' (o status operacional é mantido pelo operador).
+function shopifyStatusLabel(financialStatus, cancelledAt) {
+  if (cancelledAt) return 'Cancelado';
+  const map = {
+    refunded:           'Reembolsado',
+    partially_refunded: 'Parcialmente Reembolsado',
+    pending:            'Pendente',
+    authorized:         'Autorizado',
+    expired:            'Expirado',
+    voided:             'Anulado',
+  };
+  return map[financialStatus] ?? null;
+}
+
+// Labels operacionais que identificam um inscrito não pago (mesma lista usada
+// no portal e em sync-shopify.mjs — mantém os três em paridade).
+const INACTIVE_STATUS_LABELS = new Set([
+  'Cancelado', 'Reembolsado', 'Parcialmente Reembolsado',
+  'Expirado', 'Pendente', 'Autorizado', 'Anulado',
+]);
+
+// Verdadeiro se o inscrito conta como ativo (pago) nos agregados do portal.
+function isInscritoAtivo(i) {
+  if (i.financialStatus) return i.financialStatus === 'paid';
+  return !INACTIVE_STATUS_LABELS.has(i.status);
+}
 
 // ── HMAC Shopify ───────────────────────────────────────────────────────────────
 // Valida a assinatura enviada no header X-Shopify-Hmac-Sha256.
@@ -266,8 +293,12 @@ function extractCustomer(order) {
 
 async function recalcEvento(db, productId, variantId, varianteTitle, date) {
   const inscritos = await db.list(`cursos/${productId}/eventos/${variantId}/inscritos`);
-  const total       = inscritos.length;
-  const confirmados = inscritos.filter(i => i.status === 'Confirmado' || i.status === 'Presente').length;
+  // Agregados do portal contam apenas inscritos pagos — cancelados, reembolsados,
+  // pendentes, etc. seguem registrados no Firestore para auditoria, mas nunca
+  // entram no total principal (ETAPA 5).
+  const ativos      = inscritos.filter(isInscritoAtivo);
+  const total       = ativos.length;
+  const confirmados = ativos.filter(i => i.status === 'Confirmado' || i.status === 'Presente').length;
 
   const exists = await db.get(`cursos/${productId}/eventos/${variantId}`);
   if (exists) {
@@ -306,12 +337,15 @@ async function recalcCurso(db, productId) {
 
 // ── Handlers de pedidos ───────────────────────────────────────────────────────
 
-async function processOrder(db, order, isRefunded) {
+async function processOrder(db, order, financialStatus) {
+  const isActive = financialStatus === 'paid';
+  // Rótulo operacional para financialStatus não pago (mesma regra de sync-shopify.mjs)
+  const statusLabel = shopifyStatusLabel(financialStatus, order.cancelled_at);
   const now      = new Date();
   const affected = [];
   const lineItems = order.line_items || [];
 
-  console.log(`[processOrder] Pedido=${order.name} id=${order.id} itens=${lineItems.length} status=${order.financial_status} reembolsado=${isRefunded}`);
+  console.log(`[processOrder] Pedido=${order.name} id=${order.id} itens=${lineItems.length} financialStatus=${financialStatus}`);
 
   for (const item of lineItems) {
     const productId = Number(item.product_id);
@@ -356,24 +390,31 @@ async function processOrder(db, order, isRefunded) {
       ...fin, valor: fin.valorFinalPago,
       dataCompra: new Date(order.created_at),
       ...cust, cpf: '',
+      financialStatus,
       updatedAt: now,
     };
 
     const existing = await db.get(path);
     if (existing) {
-      if (isRefunded) base.status = 'Reembolsado';
-      await db.patch(path, base);
-      console.log(`[processOrder] Inscrito atualizado: ${inscritoId} status=${base.status || existing.status}`);
+      const updateData = { ...base };
+      // Registra quando o financialStatus realmente mudou
+      if (existing.financialStatus !== financialStatus) updateData.financialStatusUpdatedAt = now;
+      // Não pago: sobrescreve o status operacional com o rótulo real da Shopify
+      // (evita que um inscrito reembolsado/expirado/etc. continue exibindo um
+      // status operacional antigo como "Confirmado").
+      if (!isActive && statusLabel) updateData.status = statusLabel;
+      await db.patch(path, updateData);
+      console.log(`[processOrder] Inscrito atualizado: ${inscritoId} financialStatus=${financialStatus}`);
     } else {
-      const newStatus = isRefunded ? 'Reembolsado' : 'Não Confirmado';
       await db.set(path, {
         ...base,
-        status: newStatus,
+        status: isActive ? 'Não Confirmado' : (statusLabel || 'Pendente'),
+        financialStatusUpdatedAt: now,
         observacao: '',
         impresso: false, impressoEm: null, impressoPor: null,
         createdAt: now,
       });
-      console.log(`[processOrder] Inscrito criado: ${inscritoId} status=${newStatus} cliente="${cust.cliente}"`);
+      console.log(`[processOrder] Inscrito criado: ${inscritoId} financialStatus=${financialStatus} cliente="${cust.cliente}"`);
     }
 
     affected.push({ productId, variantId, varianteTitle: item.variant_title, date: parsed.date });
@@ -394,6 +435,35 @@ async function processOrder(db, order, isRefunded) {
   return affected.length;
 }
 
+// Atualiza financialStatus + status de inscritos existentes sem criar novos registros.
+// Usada quando orders/updated chega com status não-pago (pending, expired, voided, etc.).
+async function updateInscritoFinancialStatus(db, order, financialStatus) {
+  const statusLabel = shopifyStatusLabel(financialStatus, order.cancelled_at);
+  if (!statusLabel) {
+    console.log(`[updateInscritoFinancialStatus] Status sem label: ${financialStatus} — ignorado`);
+    return;
+  }
+  const now = new Date();
+  for (const item of order.line_items || []) {
+    const productId = Number(item.product_id);
+    if (!VALID_PRODUCT_IDS.has(productId) || !item.variant_id) continue;
+
+    const variantId  = String(item.variant_id);
+    const inscritoId = `${order.id}-${variantId}`;
+    const path       = `cursos/${productId}/eventos/${variantId}/inscritos/${inscritoId}`;
+
+    const existing = await db.get(path);
+    if (existing) {
+      await db.patch(path, { financialStatus, status: statusLabel, updatedAt: now });
+      console.log(`[updateInscritoFinancialStatus] ${inscritoId}: ${financialStatus} → "${statusLabel}"`);
+      await recalcEvento(db, productId, variantId, existing.variante || '', null);
+      await recalcCurso(db, productId);
+    } else {
+      console.log(`[updateInscritoFinancialStatus] Inscrito não encontrado: ${inscritoId} — nenhum registro criado`);
+    }
+  }
+}
+
 async function handleCancelled(db, order) {
   for (const item of order.line_items || []) {
     const productId = Number(item.product_id);
@@ -404,7 +474,7 @@ async function handleCancelled(db, order) {
     const existing  = await db.get(path);
 
     if (existing) {
-      await db.patch(path, { status: 'Cancelado', updatedAt: new Date() });
+      await db.patch(path, { status: 'Cancelado', financialStatus: 'cancelled', updatedAt: new Date() });
       console.log(`[webhook] Pedido cancelado: ${order.name}`);
       await recalcEvento(db, productId, variantId, existing.variante || '', null);
       await recalcCurso(db, productId);
@@ -451,17 +521,51 @@ export default {
 
     try {
       switch (topic) {
-        case 'orders/paid':
-        case 'orders/create': {
-          const n = await processOrder(db, payload, false);
-          console.log(`[webhook] Pedido recebido ${payload.name}: ${n} inscrição(ões) persistida(s)`);
+        // orders/paid: pagamento confirmado — sempre criar/atualizar inscrito
+        case 'orders/paid': {
+          const n = await processOrder(db, payload, 'paid');
+          console.log(`[webhook] Pedido pago ${payload.name}: ${n} inscrição(ões) persistida(s)`);
           break;
         }
 
+        // orders/create: criado mas ainda não necessariamente pago.
+        // Só processar se já estiver pago (ex.: pagamento instantâneo).
+        // Para pedidos não pagos, aguardar o evento orders/paid.
+        case 'orders/create': {
+          if (payload.financial_status === 'paid') {
+            const n = await processOrder(db, payload, 'paid');
+            console.log(`[webhook] Pedido criado (pago) ${payload.name}: ${n} inscrição(ões)`);
+          } else {
+            console.log(`[webhook] Pedido criado (${payload.financial_status}) ${payload.name}: aguardando orders/paid`);
+          }
+          break;
+        }
+
+        // orders/updated: atualiza status conforme o estado atual da Shopify.
         case 'orders/updated': {
-          const isRefunded = payload.financial_status === 'refunded';
-          const n = await processOrder(db, payload, isRefunded);
-          console.log(`[webhook] Pedido atualizado ${payload.name}: ${n} inscrição(ões)`);
+          // closed_at: pedido arquivado/fechado. Não indica cancelamento nem
+          // reembolso — um pedido pago pode ser arquivado e continua sendo um
+          // inscrito ativo. O sinal de cancelamento é sempre cancelled_at.
+          if (payload.closed_at) {
+            console.log(`[webhook] Pedido arquivado (closed_at=${payload.closed_at}) ${payload.name}: financial_status=${payload.financial_status} mantido`);
+          }
+
+          if (payload.cancelled_at) {
+            // Pedido cancelado: handleCancelled define financialStatus='cancelled'
+            await handleCancelled(db, payload);
+            console.log(`[webhook] Pedido cancelado (via updated) ${payload.name}`);
+          } else {
+            const fs = payload.financial_status;
+            if (fs === 'paid' || fs === 'refunded' || fs === 'partially_refunded') {
+              // Processar normalmente (cria ou atualiza inscrito com financialStatus correto)
+              const n = await processOrder(db, payload, fs);
+              console.log(`[webhook] Pedido atualizado ${payload.name}: ${n} inscrição(ões) financialStatus=${fs}`);
+            } else {
+              // Pedido não pago (pending, authorized, expired, voided): atualiza status de registros existentes
+              await updateInscritoFinancialStatus(db, payload, fs);
+              console.log(`[webhook] Status atualizado ${payload.name}: financialStatus=${fs}`);
+            }
+          }
           break;
         }
 
@@ -480,8 +584,9 @@ export default {
           );
           if (!orderResp.ok) throw new Error(`Shopify order fetch: ${orderResp.status}`);
           const { order } = await orderResp.json();
-          await processOrder(db, order, true);
-          console.log(`[webhook] Reembolso ${payload.id} processado`);
+          // Usa o financial_status real do pedido (refunded ou partially_refunded)
+          await processOrder(db, order, order.financial_status);
+          console.log(`[webhook] Reembolso ${payload.id} processado: financialStatus=${order.financial_status}`);
           break;
         }
 

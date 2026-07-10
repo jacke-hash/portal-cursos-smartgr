@@ -437,13 +437,67 @@ async function atualizarPlanilha(sheets, atualizacoes) {
     values: [[totalAtivos]],
   }));
 
-  await sheets.spreadsheets.values.batchUpdate({
+  // ── [DEBUG TEMPORÁRIO] Confirma IDs e ranges antes de escrever ──
+  logSeparador('DEBUG — CONFIG E RANGES');
+  log('DEBUG', `Spreadsheet ID (código) : ${CONFIG.SPREADSHEET_ID}`);
+  log('DEBUG', `Aba alvo               : ${CONFIG.ABA_EVENTOS}`);
+  log('DEBUG', `Total de ranges        : ${data.length}`);
+  for (const item of data) {
+    log('DEBUG', `  range="${item.range}"  valor=${item.values[0][0]}`);
+  }
+
+  // ── [DEBUG TEMPORÁRIO] Captura resposta completa do batchUpdate ──
+  logSeparador('DEBUG — RESPOSTA batchUpdate');
+  const apiResponse = await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: CONFIG.SPREADSHEET_ID,
     requestBody  : {
       valueInputOption: 'RAW',
       data,
     },
   });
+
+  const rd = apiResponse.data;
+  log('DEBUG', `spreadsheetId retornado : ${rd.spreadsheetId}`);
+  log('DEBUG', `totalUpdatedSheets      : ${rd.totalUpdatedSheets}`);
+  log('DEBUG', `totalUpdatedRows        : ${rd.totalUpdatedRows}`);
+  log('DEBUG', `totalUpdatedColumns     : ${rd.totalUpdatedColumns}`);
+  log('DEBUG', `totalUpdatedCells       : ${rd.totalUpdatedCells}`);
+
+  if (rd.responses && rd.responses.length > 0) {
+    log('DEBUG', `responses individuais (${rd.responses.length}):`);
+    for (const r of rd.responses) {
+      const ur = r.updatedRange || '(sem updatedRange)';
+      log('DEBUG', `  updatedRange="${ur}"  rows=${r.updatedRows}  cols=${r.updatedColumns}  cells=${r.updatedCells}`);
+    }
+  } else {
+    log('DEBUG', 'responses: [] (array vazio ou ausente na resposta da API)');
+  }
+
+  // ── [DEBUG TEMPORÁRIO] Leitura imediata das primeiras 5 células escritas ──
+  logSeparador('DEBUG — VERIFICAÇÃO DE LEITURA IMEDIATA');
+  log('DEBUG', 'Lendo de volta as primeiras 5 células escritas para confirmar persistência...');
+  const amostra = atualizacoes.slice(0, 5);
+  for (const { linhaNum, totalAtivos } of amostra) {
+    const cellRange = `${CONFIG.ABA_EVENTOS}!${CONFIG.COL_QUANTIDADE_VENDAS_A1}${linhaNum}`;
+    try {
+      const leitura = await sheets.spreadsheets.values.get({
+        spreadsheetId    : CONFIG.SPREADSHEET_ID,
+        range            : cellRange,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      const valorLido = leitura.data.values?.[0]?.[0] ?? '(célula vazia)';
+      const spreadsheetIdLido = leitura.data.spreadsheetId ?? '(sem campo)';
+      const status = String(valorLido) === String(totalAtivos) ? '✓ CONFIRMADO' : '✗ DIVERGE';
+      log('DEBUG', `  ${cellRange}`);
+      log('DEBUG', `    spreadsheetId lido : ${spreadsheetIdLido}`);
+      log('DEBUG', `    enviado            : ${totalAtivos}`);
+      log('DEBUG', `    lido de volta      : ${valorLido}`);
+      log('DEBUG', `    status             : ${status}`);
+    } catch (e) {
+      log('DEBUG', `  ${cellRange} — ERRO NA LEITURA: ${e.message}`);
+    }
+  }
+  // ── [FIM DEBUG TEMPORÁRIO] ──
 
   log('Sheets', `${atualizacoes.length} linha(s) atualizadas na coluna ${CONFIG.COL_QUANTIDADE_VENDAS_A1}.`);
 }
@@ -484,6 +538,12 @@ function logResultado(atualizacao) {
 async function sincronizar() {
   logSeparador('SmartGR — Sync Firestore → Google Sheets');
   log('Sync', 'Iniciando sincronização...');
+
+  // ── [DEBUG TEMPORÁRIO] Confirma variáveis de ambiente em runtime ──
+  log('DEBUG', `SHEETS_CALENDARIO_ID (env) : ${process.env.SHEETS_CALENDARIO_ID || '(não definida — usando fallback)'}`);
+  log('DEBUG', `CONFIG.SPREADSHEET_ID      : ${(process.env.SHEETS_CALENDARIO_ID || '1gsSMkeQceBYTRa9IKshvuNqa-WGImLNUcPKt2h3iSJg')}`);
+  log('DEBUG', `CONFIG.ABA_EVENTOS         : Eventos`);
+  // ── [FIM DEBUG TEMPORÁRIO] ──
 
   // 1. Inicializa conexões
   log('Init', 'Conectando ao Firestore...');

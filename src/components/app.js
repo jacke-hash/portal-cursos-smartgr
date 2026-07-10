@@ -10,11 +10,32 @@ import { icon } from "../utils/icons.js";
 
 const LOGO = "https://cdn.shopify.com/s/files/1/0727/8480/6045/files/logo_smart_gr_-_azul.svg?v=1773686608";
 
-// [alteração 6] "Cancelado" adicionado; mantida a ordem operacional existente
-const STATUSES = [
+// Statuses editáveis pelo operador (apenas para inscritos pagos)
+const OPERATIONAL_STATUSES = [
   "Não Confirmado", "Confirmado", "Presente",
-  "Ausente", "Remanejado", "Desistente", "Cancelado", "Reembolsado"
+  "Ausente", "Remanejado", "Desistente",
 ];
+
+// Statuses derivados da Shopify (inscritos não ativos — somente leitura no portal)
+const INACTIVE_STATUS_LABELS = new Set([
+  "Cancelado", "Reembolsado", "Parcialmente Reembolsado",
+  "Expirado", "Pendente", "Autorizado", "Anulado",
+]);
+
+// Lista completa para o filtro de status (inclui ativos e inativos)
+const STATUSES = [
+  ...OPERATIONAL_STATUSES,
+  "Cancelado", "Reembolsado", "Parcialmente Reembolsado",
+  "Expirado", "Pendente", "Autorizado", "Anulado",
+];
+
+// Um inscrito é considerado ativo (pago) se:
+// - possui financialStatus === 'paid', OU
+// - não possui financialStatus E o status não é um label de inativo (compatibilidade com registros legados)
+function isInscritoAtivo(i) {
+  if (i.financialStatus) return i.financialStatus === 'paid';
+  return !INACTIVE_STATUS_LABELS.has(i.status);
+}
 
 const PAGE_SIZE = 25;
 
@@ -105,7 +126,7 @@ let state = {
   search: "",
   eventoSearch: "",
   showPastEventos: false,
-  filters: { status: "", vendedor: "", variante: "", impresso: "" },
+  filters: { status: "", vendedor: "", variante: "", impresso: "", inativos: "" },
   sortKey: "dataCompra",
   sortDir: "desc",
   page: 1,
@@ -199,7 +220,7 @@ function tryRestore() {
       const evento = eventos.find(e => e.id === savedEventoId);
       if (evento) {
         state.search = saved.search || "";
-        state.filters = saved.filters || { status: "", vendedor: "", variante: "", impresso: "" };
+        state.filters = { status: "", vendedor: "", variante: "", impresso: "", inativos: "", ...(saved.filters || {}) };
         state.sortKey = saved.sortKey || "dataCompra";
         state.sortDir = saved.sortDir || "desc";
         state.page = saved.page || 1;
@@ -430,19 +451,28 @@ function eventoCard(evento) {
   `;
 }
 
-// [alteração 6] Centraliza cálculo de todos os status operacionais
 function inscritosStats() {
-  const all = state.inscritos;
+  const all     = state.inscritos;
+  const ativos  = all.filter(isInscritoAtivo);
+  const inativos = all.filter(i => !isInscritoAtivo(i));
   return {
-    total: all.length,
-    confirmados: all.filter(i => i.status === "Confirmado" || i.status === "Presente").length,
-    naoConfirmados: all.filter(i => i.status === "Não Confirmado").length,
-    presentes: all.filter(i => i.status === "Presente").length,
-    ausentes: all.filter(i => i.status === "Ausente").length,
-    desistentes: all.filter(i => i.status === "Desistente").length,
-    cancelados: all.filter(i => i.status === "Cancelado").length,
-    reembolsados: all.filter(i => i.status === "Reembolsado").length,
-    impressos: all.filter(i => i.impresso === true).length,
+    // Contagens operacionais — apenas inscritos pagos
+    total:          ativos.length,
+    confirmados:    ativos.filter(i => i.status === "Confirmado" || i.status === "Presente").length,
+    naoConfirmados: ativos.filter(i => i.status === "Não Confirmado").length,
+    presentes:      ativos.filter(i => i.status === "Presente").length,
+    ausentes:       ativos.filter(i => i.status === "Ausente").length,
+    desistentes:    ativos.filter(i => i.status === "Desistente").length,
+    impressos:      ativos.filter(i => i.impresso === true).length,
+    // Contagens de inativos — apenas para auditoria
+    cancelados:        inativos.filter(i => i.financialStatus === "cancelled"         || i.status === "Cancelado").length,
+    reembolsados:      inativos.filter(i => i.financialStatus === "refunded"          || i.status === "Reembolsado").length,
+    parcReembolsados:  inativos.filter(i => i.financialStatus === "partially_refunded"|| i.status === "Parcialmente Reembolsado").length,
+    expirados:         inativos.filter(i => i.financialStatus === "expired"           || i.status === "Expirado").length,
+    pendentes:         inativos.filter(i => i.financialStatus === "pending"           || i.status === "Pendente").length,
+    anulados:          inativos.filter(i => i.financialStatus === "voided"            || i.status === "Anulado").length,
+    autorizados:       inativos.filter(i => i.financialStatus === "authorized"        || i.status === "Autorizado").length,
+    totalInativos:     inativos.length,
   };
 }
 
@@ -469,6 +499,11 @@ function _filtersBar(vendedores, variantes) {
         <option value="">Impressos: todos</option>
         <option value="true" ${state.filters.impresso === "true" ? "selected" : ""}>Somente Impressos</option>
         <option value="false" ${state.filters.impresso === "false" ? "selected" : ""}>Somente Pendentes</option>
+      </select>
+      <select class="filter-select" data-filter="inativos">
+        <option value="">Somente pagos</option>
+        <option value="all"  ${state.filters.inativos === "all"  ? "selected" : ""}>Todos (incluindo inativos)</option>
+        <option value="only" ${state.filters.inativos === "only" ? "selected" : ""}>Somente inativos</option>
       </select>
       ${hasFilters() ? `<button class="btn-clear" data-action="clear-filters">Limpar filtros</button>` : ""}
     </div>`;
@@ -532,7 +567,7 @@ function eventoView() {
     </section>
 
     <div class="stats-bar" id="stats-bar">
-      ${statCard("Total Geral",      stats.total,          "",               icon.users())}
+      ${statCard("Total Pagos",      stats.total,          "",               icon.users())}
       ${statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle())}
       ${statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3())}
       ${statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin())}
@@ -540,6 +575,11 @@ function eventoView() {
       ${statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus())}
       ${statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle())}
       ${statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet())}
+      ${stats.parcReembolsados > 0 ? statCard("Parc. Reembolsados", stats.parcReembolsados, "parcialmente-reembolsado", icon.wallet()) : ""}
+      ${stats.expirados        > 0 ? statCard("Expirados",           stats.expirados,         "expirado",                icon.clock3())  : ""}
+      ${stats.pendentes        > 0 ? statCard("Pendentes",           stats.pendentes,          "pendente",                icon.clock3())  : ""}
+      ${stats.anulados         > 0 ? statCard("Anulados",            stats.anulados,           "anulado",                 icon.xCircle()) : ""}
+      ${stats.autorizados      > 0 ? statCard("Autorizados",         stats.autorizados,        "autorizado",              icon.clock3())  : ""}
     </div>
 
     ${batchActionsBar()}
@@ -580,7 +620,7 @@ function batchActionsBar() {
 }
 
 function printCounterBar(stats) {
-  const total = stats.total;
+  const total = stats.total; // apenas pagos
   const imp   = stats.impressos;
   const pend  = total - imp;
   const pct   = total > 0 ? Math.round((imp / total) * 100) : 0;
@@ -639,10 +679,12 @@ function th(key, label) {
 }
 
 function inscritoRow(inscrito) {
-  const cls = statusClass(inscrito.status || "");
-  const sel = state.selectedIds.has(inscrito.id);
+  const cls   = statusClass(inscrito.status || "");
+  const sel   = state.selectedIds.has(inscrito.id);
+  const ativo = isInscritoAtivo(inscrito);
+  const rowClasses = [sel ? "row-selected" : "", !ativo ? "row-inativo" : ""].filter(Boolean).join(" ");
   return `
-    <tr data-inscrito-id="${inscrito.id}"${sel ? ' class="row-selected"' : ""}>
+    <tr data-inscrito-id="${inscrito.id}"${rowClasses ? ` class="${rowClasses}"` : ""}>
       <td class="check-col">
         <input type="checkbox" class="row-check" data-action="toggle-select" data-inscrito-id="${inscrito.id}" ${sel ? "checked" : ""}>
       </td>
@@ -652,13 +694,16 @@ function inscritoRow(inscrito) {
       <td>${inscrito.telefone || "--"}</td>
       <td>${inscrito.cpf || "--"}</td>
       <td>${inscrito.email || "--"}</td>
-      <td>${inscrito.cliente || "--"}</td>
+      <td class="${!ativo ? "td-nome-inativo" : ""}">${inscrito.cliente || "--"}</td>
       <td>${inscrito.variante || "--"}</td>
       <td>${inscrito.vendedor || "--"}</td>
       <td>
-        <select class="status-select status-${cls}" data-action="change-status" data-inscrito-id="${inscrito.id}">
-          ${STATUSES.map(s => `<option value="${s}" ${inscrito.status === s ? "selected" : ""}>${s}</option>`).join("")}
-        </select>
+        ${ativo
+          ? `<select class="status-select status-${cls}" data-action="change-status" data-inscrito-id="${inscrito.id}">
+              ${OPERATIONAL_STATUSES.map(s => `<option value="${s}" ${inscrito.status === s ? "selected" : ""}>${s}</option>`).join("")}
+             </select>`
+          : `<span class="status-inactive-badge status-${cls}">${inscrito.status || "—"}</span>`
+        }
       </td>
       <td>
         <input class="note" placeholder="Adicionar observação..."
@@ -676,17 +721,19 @@ function inscritoRow(inscrito) {
 }
 
 function inscritoCard(inscrito) {
-  const cls = statusClass(inscrito.status || "");
-  const sel = state.selectedIds.has(inscrito.id);
+  const cls   = statusClass(inscrito.status || "");
+  const sel   = state.selectedIds.has(inscrito.id);
+  const ativo = isInscritoAtivo(inscrito);
+  const cardClasses = ["mobile-card", sel ? "mobile-card--selected" : "", !ativo ? "mobile-card--inactive" : ""].filter(Boolean).join(" ");
   return `
-    <div class="mobile-card${sel ? " mobile-card--selected" : ""}" data-inscrito-id="${inscrito.id}">
+    <div class="${cardClasses}" data-inscrito-id="${inscrito.id}">
       <div class="mc-top">
         <input type="checkbox" class="row-check mc-check" data-action="toggle-select" data-inscrito-id="${inscrito.id}" ${sel ? "checked" : ""}>
         <span class="mc-pedido">${inscrito.pedido || "--"}</span>
         <span class="mc-valor">${money.format(valorPago(inscrito))}</span>
       </div>
       <div class="mc-body">
-        <strong class="mc-nome">${inscrito.cliente || "--"}</strong>
+        <strong class="mc-nome${!ativo ? " nome-inativo" : ""}">${inscrito.cliente || "--"}</strong>
         <span class="mc-email">${inscrito.email || ""}</span>
         <div class="mc-meta">
           ${inscrito.telefone ? `<span>📞 ${inscrito.telefone}</span>` : ""}
@@ -695,14 +742,18 @@ function inscritoCard(inscrito) {
         </div>
       </div>
       <div class="mc-bottom">
-        <select class="status-select status-${cls}" data-action="change-status" data-inscrito-id="${inscrito.id}">
-          ${STATUSES.map(s => `<option value="${s}" ${inscrito.status === s ? "selected" : ""}>${s}</option>`).join("")}
-        </select>
+        ${ativo
+          ? `<select class="status-select status-${cls}" data-action="change-status" data-inscrito-id="${inscrito.id}">
+               ${OPERATIONAL_STATUSES.map(s => `<option value="${s}" ${inscrito.status === s ? "selected" : ""}>${s}</option>`).join("")}
+             </select>`
+          : `<span class="status-inactive-badge status-${cls}">${inscrito.status || "—"}</span>`
+        }
         <button class="impresso-btn${inscrito.impresso ? " ativo" : ""}" data-action="toggle-impresso" data-inscrito-id="${inscrito.id}">
           ${inscrito.impresso ? "☑ Impresso" : "☐ Pendente"}
         </button>
+        ${ativo ? `
         <button class="mc-action-btn" data-action="quick-confirmado" data-inscrito-id="${inscrito.id}">✓</button>
-        <button class="mc-action-btn" data-action="quick-presente" data-inscrito-id="${inscrito.id}">📍</button>
+        <button class="mc-action-btn" data-action="quick-presente" data-inscrito-id="${inscrito.id}">📍</button>` : ""}
       </div>
     </div>`;
 }
@@ -725,6 +776,17 @@ function empty(msg) {
 
 function filteredInscritos() {
   let list = [...state.inscritos];
+
+  // Filtro de atividade: por padrão exibe apenas inscritos pagos.
+  // Quando o usuário seleciona um status inativo explicitamente, inclui inativos.
+  const filteringByInactiveStatus = state.filters.status && INACTIVE_STATUS_LABELS.has(state.filters.status);
+  if (state.filters.inativos === "only") {
+    list = list.filter(i => !isInscritoAtivo(i));
+  } else if (state.filters.inativos === "all" || filteringByInactiveStatus) {
+    // exibe tudo
+  } else {
+    list = list.filter(isInscritoAtivo);
+  }
 
   if (state.search) {
     const q = normalize(state.search);
@@ -809,14 +871,19 @@ function eventoViewPartialUpdate() {
   const filtersBtnDot  = root.querySelector(".btn-filters-toggle");
 
   if (statsBar) statsBar.innerHTML =
-    statCard("Total Geral",      stats.total,          "",               icon.users()) +
+    statCard("Total Pagos",      stats.total,          "",               icon.users()) +
     statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle()) +
     statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3()) +
     statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin()) +
     statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX()) +
     statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus()) +
     statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle()) +
-    statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet());
+    statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet()) +
+    (stats.parcReembolsados > 0 ? statCard("Parc. Reembolsados", stats.parcReembolsados, "parcialmente-reembolsado", icon.wallet()) : "") +
+    (stats.expirados        > 0 ? statCard("Expirados",           stats.expirados,         "expirado",                icon.clock3())  : "") +
+    (stats.pendentes        > 0 ? statCard("Pendentes",           stats.pendentes,          "pendente",                icon.clock3())  : "") +
+    (stats.anulados         > 0 ? statCard("Anulados",            stats.anulados,           "anulado",                 icon.xCircle()) : "") +
+    (stats.autorizados      > 0 ? statCard("Autorizados",         stats.autorizados,        "autorizado",              icon.clock3())  : "");
 
   if (batchBar) batchBar.outerHTML = batchActionsBar();
 
@@ -891,7 +958,7 @@ function handleClick(e) {
     } else if (action === "open-evento") {
       openEvento(el.dataset.eventoId);
     } else if (action === "clear-filters") {
-      state.filters = { status: "", vendedor: "", variante: "", impresso: "" };
+      state.filters = { status: "", vendedor: "", variante: "", impresso: "", inativos: "" };
       state.search = "";
       state.page = 1;
       saveNav();
