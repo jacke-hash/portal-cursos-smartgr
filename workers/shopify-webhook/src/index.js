@@ -274,6 +274,22 @@ function calcFinancials(item, order) {
   return { quantidade, precoCatalogo, descontoAplicado, valorFinalPago, valorUnitarioPago };
 }
 
+// Busca o metafield custom.cpf do cliente. Nunca lança erro — retorna '' em qualquer falha.
+async function getCustomerCpf(customerId, accessToken) {
+  if (!customerId) return '';
+  try {
+    const resp = await fetch(
+      `https://${SHOPIFY_STORE}/admin/api/2024-01/customers/${customerId}/metafields.json?namespace=custom&key=cpf`,
+      { headers: { 'X-Shopify-Access-Token': accessToken } }
+    );
+    if (!resp.ok) return '';
+    const data = await resp.json();
+    return data.metafields?.[0]?.value || '';
+  } catch {
+    return '';
+  }
+}
+
 function extractCustomer(order) {
   return {
     cliente: [
@@ -337,7 +353,7 @@ async function recalcCurso(db, productId) {
 
 // ── Handlers de pedidos ───────────────────────────────────────────────────────
 
-async function processOrder(db, order, financialStatus) {
+async function processOrder(db, order, financialStatus, env) {
   const isActive = financialStatus === 'paid';
   // Rótulo operacional para financialStatus não pago (mesma regra de sync-shopify.mjs)
   const statusLabel = shopifyStatusLabel(financialStatus, order.cancelled_at);
@@ -383,18 +399,21 @@ async function processOrder(db, order, financialStatus) {
 
     console.log(`[processOrder] Financeiro: subtotal=${fin.precoCatalogo * fin.quantidade} descontoAplicado=${fin.descontoAplicado} valorFinalPago=${fin.valorFinalPago} cliente="${cust.cliente}"`);
 
+    const existing = await db.get(path);
+    // Reaproveita o CPF já salvo — nunca sobrescreve com vazio; só busca quando ainda não há valor.
+    const cpf = existing?.cpf || await getCustomerCpf(order.customer?.id, env.SHOPIFY_ACCESS_TOKEN);
+
     const base = {
       pedido: order.name, shopifyId: String(order.id),
       productId: String(productId), variantId,
       variante: item.variant_title,
       ...fin, valor: fin.valorFinalPago,
       dataCompra: new Date(order.created_at),
-      ...cust, cpf: '',
+      ...cust, cpf,
       financialStatus,
       updatedAt: now,
     };
 
-    const existing = await db.get(path);
     if (existing) {
       const updateData = { ...base };
       // Registra quando o financialStatus realmente mudou
@@ -523,7 +542,7 @@ export default {
       switch (topic) {
         // orders/paid: pagamento confirmado — sempre criar/atualizar inscrito
         case 'orders/paid': {
-          const n = await processOrder(db, payload, 'paid');
+          const n = await processOrder(db, payload, 'paid', env);
           console.log(`[webhook] Pedido pago ${payload.name}: ${n} inscrição(ões) persistida(s)`);
           break;
         }
@@ -533,7 +552,7 @@ export default {
         // Para pedidos não pagos, aguardar o evento orders/paid.
         case 'orders/create': {
           if (payload.financial_status === 'paid') {
-            const n = await processOrder(db, payload, 'paid');
+            const n = await processOrder(db, payload, 'paid', env);
             console.log(`[webhook] Pedido criado (pago) ${payload.name}: ${n} inscrição(ões)`);
           } else {
             console.log(`[webhook] Pedido criado (${payload.financial_status}) ${payload.name}: aguardando orders/paid`);
@@ -558,7 +577,7 @@ export default {
             const fs = payload.financial_status;
             if (fs === 'paid' || fs === 'refunded' || fs === 'partially_refunded') {
               // Processar normalmente (cria ou atualiza inscrito com financialStatus correto)
-              const n = await processOrder(db, payload, fs);
+              const n = await processOrder(db, payload, fs, env);
               console.log(`[webhook] Pedido atualizado ${payload.name}: ${n} inscrição(ões) financialStatus=${fs}`);
             } else {
               // Pedido não pago (pending, authorized, expired, voided): atualiza status de registros existentes
@@ -585,7 +604,7 @@ export default {
           if (!orderResp.ok) throw new Error(`Shopify order fetch: ${orderResp.status}`);
           const { order } = await orderResp.json();
           // Usa o financial_status real do pedido (refunded ou partially_refunded)
-          await processOrder(db, order, order.financial_status);
+          await processOrder(db, order, order.financial_status, env);
           console.log(`[webhook] Reembolso ${payload.id} processado: financialStatus=${order.financial_status}`);
           break;
         }

@@ -54,6 +54,11 @@ function normalize(str) {
     .normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
+// Mantém apenas dígitos — permite buscar CPF com ou sem pontuação (062.994.758-97 == 06299475897)
+function normalizeDigits(str) {
+  return (str || "").toString().replace(/\D/g, "");
+}
+
 // Extrai Date de qualquer formato que o Firestore possa entregar
 function extractEventDate(raw) {
   if (!raw) return null;
@@ -166,6 +171,12 @@ export function renderApp(target) {
   render();
 }
 
+// Busca um evento em ativos ou encerrados — usado tanto ao abrir pelo card
+// quanto ao restaurar a navegação após F5, para tratar os dois casos igual.
+function findEvento(eventoId) {
+  return state.eventos.find(e => e.id === eventoId) || state.encerrados.find(e => e.id === eventoId);
+}
+
 // [alteração 2] Restaura navegação salva assim que Firestore entrega os cursos
 function tryRestore() {
   const saved = pendingRestore;
@@ -197,37 +208,47 @@ function tryRestore() {
   if (unsubEventos)    unsubEventos();
   if (unsubEncerrados) unsubEncerrados();
 
+  const savedEventoId = saved.eventoId;
+  const savedRoute = saved.route;
+  const savedScrollY = saved.scrollY || 0;
+  let didAttemptEvento = false;
+  // Eventos ativos e encerrados chegam de listeners independentes, em ordem não
+  // garantida. Só tentamos restaurar o evento salvo depois que AMBOS entregarem
+  // o primeiro snapshot — assim não importa se ele está em ativos ou encerrados.
+  let eventosLoaded = false;
+  let encerradosLoaded = false;
+
+  function attemptRestoreEvento() {
+    if (didAttemptEvento || savedRoute !== "evento" || !savedEventoId) return;
+    if (!eventosLoaded || !encerradosLoaded) return;
+    didAttemptEvento = true;
+
+    const evento = findEvento(savedEventoId);
+    if (evento) {
+      state.search = saved.search || "";
+      state.filters = { status: "", vendedor: "", variante: "", impresso: "", inativos: "", ...(saved.filters || {}) };
+      state.sortKey = saved.sortKey || "dataCompra";
+      state.sortDir = saved.sortDir || "desc";
+      state.page = saved.page || 1;
+      _restoreOpenEvento(evento, savedScrollY);
+    }
+  }
+
   // Encerrados carregados em paralelo para exibir o contador no botão
   unsubEncerrados = listenEncerrados(curso.id, (encerrados) => {
     state.encerrados = encerrados;
+    encerradosLoaded = true;
+    attemptRestoreEvento();
     if (state.route === "curso") {
       if (root.querySelector("#eventos-content")) cursoEventosPartialUpdate();
       else render();
     }
   });
 
-  const savedEventoId = saved.eventoId;
-  const savedRoute = saved.route;
-  const savedScrollY = saved.scrollY || 0;
-  let didAttemptEvento = false;
-
   unsubEventos = listenEventos(curso.id, (eventos) => {
     state.eventos = eventos;
-
-    // [alteração 2] tenta uma única vez restaurar o evento salvo
-    if (!didAttemptEvento && savedRoute === "evento" && savedEventoId) {
-      didAttemptEvento = true;
-      const evento = eventos.find(e => e.id === savedEventoId);
-      if (evento) {
-        state.search = saved.search || "";
-        state.filters = { status: "", vendedor: "", variante: "", impresso: "", inativos: "", ...(saved.filters || {}) };
-        state.sortKey = saved.sortKey || "dataCompra";
-        state.sortDir = saved.sortDir || "desc";
-        state.page = saved.page || 1;
-        _restoreOpenEvento(evento, savedScrollY);
-        return;
-      }
-    }
+    eventosLoaded = true;
+    attemptRestoreEvento();
 
     if (state.route === "curso") {
       if (root.querySelector("#eventos-content")) {
@@ -692,7 +713,7 @@ function inscritoRow(inscrito) {
       <td>${money.format(valorPago(inscrito))}</td>
       <td>${formatDate(inscrito.dataCompra)}</td>
       <td>${inscrito.telefone || "--"}</td>
-      <td>${inscrito.cpf || "--"}</td>
+      <td>${inscrito.cpf || "CPF não informado"}</td>
       <td>${inscrito.email || "--"}</td>
       <td class="${!ativo ? "td-nome-inativo" : ""}">${inscrito.cliente || "--"}</td>
       <td>${inscrito.variante || "--"}</td>
@@ -737,6 +758,7 @@ function inscritoCard(inscrito) {
         <span class="mc-email">${inscrito.email || ""}</span>
         <div class="mc-meta">
           ${inscrito.telefone ? `<span>📞 ${inscrito.telefone}</span>` : ""}
+          <span>🪪 ${inscrito.cpf || "CPF não informado"}</span>
           ${inscrito.cidade   ? `<span>📍 ${inscrito.cidade}${inscrito.estado ? " – " + inscrito.estado : ""}</span>` : ""}
           ${inscrito.vendedor ? `<span>👤 ${inscrito.vendedor}</span>` : ""}
         </div>
@@ -790,11 +812,15 @@ function filteredInscritos() {
 
   if (state.search) {
     const q = normalize(state.search);
-    list = list.filter(i =>
-      [i.pedido, i.cliente, i.email, i.cpf, i.telefone,
-       i.cidade, i.estado, i.variante, i.vendedor, formatDate(i.dataCompra)]
-        .some(v => normalize(v).includes(q))
-    );
+    const qDigits = normalizeDigits(state.search);
+    list = list.filter(i => {
+      const matchesTexto = [i.pedido, i.cliente, i.email, i.cpf, i.telefone,
+        i.cidade, i.estado, i.variante, i.vendedor, formatDate(i.dataCompra)]
+        .some(v => normalize(v).includes(q));
+      // Busca por CPF ignorando pontuação — "06299475897" encontra "062.994.758-97"
+      const matchesCpf = qDigits && normalizeDigits(i.cpf).includes(qDigits);
+      return matchesTexto || matchesCpf;
+    });
   }
 
   if (state.filters.status)   list = list.filter(i => i.status === state.filters.status);
@@ -1203,7 +1229,7 @@ function goToCurso() {
 }
 
 function openEvento(eventoId) {
-  const evento = state.eventos.find(e => e.id === eventoId);
+  const evento = findEvento(eventoId);
   if (!evento) return;
   state.evento = evento;
   state.route = "evento";

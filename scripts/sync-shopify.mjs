@@ -212,6 +212,25 @@ function isConfirmado(status) {
   return status === 'Confirmado' || status === 'Presente';
 }
 
+// Busca o metafield custom.cpf do cliente. Nunca lança erro — retorna '' em qualquer falha.
+// Cache em memória evita buscar o mesmo cliente mais de uma vez por execução.
+const cpfCache = new Map();
+async function getCustomerCpf(customerId) {
+  if (!customerId) return '';
+  if (cpfCache.has(customerId)) return cpfCache.get(customerId);
+  let cpf = '';
+  try {
+    const { data } = await shopifyGet(
+      `${SHOPIFY_BASE}/customers/${customerId}/metafields.json?namespace=custom&key=cpf`
+    );
+    cpf = data.metafields?.[0]?.value || '';
+  } catch (e) {
+    console.log(`  Aviso: falha ao buscar CPF do cliente ${customerId}: ${e.message}`);
+  }
+  cpfCache.set(customerId, cpf);
+  return cpf;
+}
+
 // Evento encerrado quando a data de calendário é <= hoje (inclui o próprio dia)
 function isEventoEncerrado(date) {
   if (!date) return false;
@@ -562,6 +581,10 @@ async function sync() {
       const isAtivo = orderFinancialStatus === 'paid';
       const statusLabel = shopifyStatusLabel(orderFinancialStatus, order.cancelled_at);
 
+      // Reaproveita o CPF já salvo — nunca sobrescreve com vazio; só busca quando ainda não há valor.
+      const cpfExistente = snap.exists ? (snap.data().cpf || '') : '';
+      const cpf = cpfExistente || await getCustomerCpf(order.customer?.id);
+
       try {
         if (snap.exists) {
           const updateData = {
@@ -582,7 +605,7 @@ async function sync() {
             cidade,
             estado,
             empresa,
-            cpf: '',
+            cpf,
             vendedor,
             variante: variantTitle,
             financialStatus: orderFinancialStatus,
@@ -610,7 +633,7 @@ async function sync() {
             cidade,
             estado,
             empresa,
-            cpf: '',
+            cpf,
             vendedor,
             variante: variantTitle,
             financialStatus: orderFinancialStatus,
@@ -744,8 +767,15 @@ async function sync() {
     }
   }
 
-  // 3. Atualiza registros cujo financialStatus diverge do estado atual da Shopify
-  let reconciliados = 0;
+  // 3. Atualiza registros que: (a) não possuem financialStatus (backfill), ou
+  //    (b) possuem financialStatus divergente do estado atual da Shopify, ou
+  //    (c) possuem status operacional desatualizado em relação ao rótulo da Shopify.
+  //    A ausência do campo financialStatus, por si só, já obriga a gravação —
+  //    mesmo quando o pedido continua pago — para eliminar os registros legados
+  //    que nunca passaram por este campo.
+  let backfill      = 0; // financialStatus gravado pela primeira vez
+  let reconciliados = 0; // financialStatus já existia mas divergia da Shopify
+  let statusAlterado = 0; // campo status (operacional) mudou de valor nesta rodada
   let semAlteracao  = 0;
   const now2 = Timestamp.now();
 
@@ -760,30 +790,36 @@ async function sync() {
     const statusLabel = shopifyStatusLabel(current.financial_status, current.cancelled_at);
 
     for (const { ref, data } of refs) {
-      const storedFS = resolveFinancialStatus(data);
+      const missingFS = data.financialStatus === undefined;
+      const storedFS  = resolveFinancialStatus(data);
+      const fsChanged = !missingFS && storedFS !== shopifyFS;
+      // Não pago: o status operacional deve sempre refletir o rótulo real da Shopify
+      const statusOutdated = shopifyFS !== 'paid' && !!statusLabel && data.status !== statusLabel;
 
-      if (storedFS === shopifyFS) {
+      if (!missingFS && !fsChanged && !statusOutdated) {
         semAlteracao++;
         continue;
       }
 
       const patch = { financialStatus: shopifyFS, updatedAt: now2 };
-      // Atualiza status operacional para registros não pagos
+      // Atualiza status operacional apenas para registros não pagos.
+      // Pago: o status operacional permanece 100% editável pelo operador —
+      // o backfill nunca sobrescreve status de um pedido pago.
       if (shopifyFS !== 'paid' && statusLabel) patch.status = statusLabel;
-      // Para registros que voltaram a ser 'paid' (raro), apenas atualiza o financialStatus;
-      // o operador decide o status operacional manualmente.
 
       try {
         await ref.update(patch);
-        console.log(`  ✓ Reconciliado ${shopifyId}: ${storedFS} → ${shopifyFS}${statusLabel ? ` (${statusLabel})` : ''}`);
-        reconciliados++;
+        const origem = missingFS ? '(ausente)' : storedFS;
+        console.log(`  ✓ ${missingFS ? 'Backfill' : 'Reconciliado'} ${shopifyId}: ${origem} → ${shopifyFS}${statusLabel && shopifyFS !== 'paid' ? ` (${statusLabel})` : ''}`);
+        if (missingFS) backfill++; else reconciliados++;
+        if (statusOutdated) statusAlterado++;
       } catch (e) {
         console.log(`  ✗ Erro ao reconciliar ${shopifyId}: ${e.message}`);
       }
     }
   }
 
-  console.log(`Reconciliados: ${reconciliados} | Sem alteração: ${semAlteracao}`);
+  console.log(`Backfill (financialStatus ausente): ${backfill} | Reconciliados (divergência): ${reconciliados} | Status alterado: ${statusAlterado} | Sem alteração: ${semAlteracao}`);
 
   // ─── Comparação final ─────────────────────────────────────────────────────
   console.log('\n=== Comparação Final ===');
