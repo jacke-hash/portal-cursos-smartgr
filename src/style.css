@@ -617,6 +617,31 @@ h2 {
   border-radius: var(--radius);
 }
 
+/* ── LOADING ── */
+.loading {
+  padding: 48px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.loading::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border: 2px solid var(--line);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: loading-spin .7s linear infinite;
+}
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ── PAGE HEAD SPLIT ── */
 .page-head-left  { display: flex; flex-direction: column; gap: 4px; }
 .page-head-right {

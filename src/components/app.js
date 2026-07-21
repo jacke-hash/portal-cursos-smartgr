@@ -136,6 +136,12 @@ let state = {
   sortDir: "desc",
   page: 1,
   selectedIds: new Set(),   // seleção manual de inscritos (bulk actions)
+  // [fix] Flags de "primeiro snapshot recebido" — evitam mostrar "nenhum resultado"
+  // antes do Firestore responder (corrida entre render() inicial e onSnapshot assíncrono)
+  cursosLoaded: false,
+  eventosLoaded: false,
+  encerradosLoaded: false,
+  inscritosLoaded: false,
 };
 
 let unsubCursos    = null;
@@ -158,6 +164,8 @@ export function renderApp(target) {
 
   unsubCursos = listenCursos((cursos) => {
     state.cursos = cursos;
+    // [fix] marca que o primeiro snapshot já chegou — libera a UI de "loading"
+    state.cursosLoaded = true;
     // [alteração 2] na primeira chegada de dados, tenta restaurar navegação
     if (pendingRestore) {
       tryRestore();
@@ -201,6 +209,9 @@ function tryRestore() {
   state.route = "curso";
   state.eventos    = [];
   state.encerrados = [];
+  // [fix] reseta as flags de loading — a UI mostra "carregando" até o próximo snapshot
+  state.eventosLoaded = false;
+  state.encerradosLoaded = false;
   state.eventoSearch = saved.eventoSearch || "";
   state.showPastEventos = false;
   state.page = 1;
@@ -237,6 +248,7 @@ function tryRestore() {
   // Encerrados carregados em paralelo para exibir o contador no botão
   unsubEncerrados = listenEncerrados(curso.id, (encerrados) => {
     state.encerrados = encerrados;
+    state.encerradosLoaded = true;
     encerradosLoaded = true;
     attemptRestoreEvento();
     if (state.route === "curso") {
@@ -247,6 +259,7 @@ function tryRestore() {
 
   unsubEventos = listenEventos(curso.id, (eventos) => {
     state.eventos = eventos;
+    state.eventosLoaded = true;
     eventosLoaded = true;
     attemptRestoreEvento();
 
@@ -267,10 +280,13 @@ function _restoreOpenEvento(evento, scrollY) {
   state.evento = evento;
   state.route = "evento";
   state.inscritos = [];
+  // [fix] reseta a flag de loading — a tabela mostra "carregando" até o próximo snapshot
+  state.inscritosLoaded = false;
 
   if (unsubInscritos) unsubInscritos();
   unsubInscritos = listenInscritos(state.curso.id, evento.id, (inscritos) => {
     state.inscritos = inscritos;
+    state.inscritosLoaded = true;
     if (state.route === "evento") {
       if (root.querySelector("#inscritos-tbody")) {
         const scroll = document.documentElement.scrollTop || document.body.scrollTop;
@@ -330,6 +346,9 @@ function filteredCursos() {
 }
 
 function courseGridContent() {
+  // [fix] Enquanto o primeiro snapshot do Firestore não chegou, mostra loading
+  // em vez de "nenhum curso encontrado" — evita o flash de vazio ao recarregar (F5)
+  if (!state.cursosLoaded) return loading("Carregando cursos...");
   const filtered = filteredCursos();
   return filtered.length ? filtered.map(courseCard).join("") : empty("Nenhum curso encontrado.");
 }
@@ -404,6 +423,10 @@ function computeEventoSections() {
 
 // [alteração 1] Exibe encerrados apenas quando toggle ativo
 function eventoGridContent(sections) {
+  // [fix] mesma corrida do course-grid: aguarda o primeiro snapshot de eventos
+  if (!state.eventosLoaded) {
+    return `<div class="loading" style="grid-column:1/-1">Carregando eventos...</div>`;
+  }
   const { future, past } = sections;
   let html = future.length
     ? future.map(eventoCard).join("")
@@ -533,6 +556,13 @@ function _filtersBar(vendedores, variantes) {
 function _tableSection(paginated, colSpan = 13) {
   const filtered = filteredInscritos();
   const allSelected = filtered.length > 0 && filtered.every(i => state.selectedIds.has(i.id));
+  // [fix] enquanto o primeiro snapshot de inscritos não chegou, mostra "carregando"
+  // em vez de "nenhum inscrito encontrado" — evita o flash de vazio ao abrir o evento
+  const tbodyContent = !state.inscritosLoaded
+    ? `<tr><td colspan="${colSpan}" class="empty-row">Carregando inscritos...</td></tr>`
+    : (paginated.length
+        ? paginated.map(inscritoRow).join("")
+        : `<tr><td colspan="${colSpan}" class="empty-row">Nenhum inscrito encontrado.</td></tr>`);
   return `
     <div class="table-wrap">
       <table class="data-table">
@@ -556,9 +586,7 @@ function _tableSection(paginated, colSpan = 13) {
           </tr>
         </thead>
         <tbody id="inscritos-tbody">
-          ${paginated.length
-            ? paginated.map(inscritoRow).join("")
-            : `<tr><td colspan="${colSpan}" class="empty-row">Nenhum inscrito encontrado.</td></tr>`}
+          ${tbodyContent}
         </tbody>
       </table>
     </div>`;
@@ -615,7 +643,9 @@ function eventoView() {
     ${_filtersBar(vendedores, variantes)}
 
     <div class="mobile-cards" id="mobile-cards">
-      ${paginated.length ? paginated.map(inscritoCard).join("") : `<p class="empty-row">Nenhum inscrito encontrado.</p>`}
+      ${!state.inscritosLoaded
+        ? `<p class="empty-row">Carregando inscritos...</p>`
+        : (paginated.length ? paginated.map(inscritoCard).join("") : `<p class="empty-row">Nenhum inscrito encontrado.</p>`)}
     </div>
 
     ${_tableSection(paginated)}
@@ -794,6 +824,10 @@ function empty(msg) {
   return `<div class="empty">${msg}</div>`;
 }
 
+function loading(msg) {
+  return `<div class="loading">${msg}</div>`;
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 function filteredInscritos() {
@@ -877,6 +911,18 @@ function _partialUpdateSelection() {
 // ─── PARTIAL UPDATES ─────────────────────────────────────────────────────────
 // [alteração 4] Re-render cirúrgico preserva contexto do usuário sem refresh total
 
+// [fix] Atualiza as <option> de um <select> de filtro preservando o valor selecionado.
+// Necessário porque os selects de vendedor/variante só têm dados depois que o
+// Firestore entrega os inscritos — bem depois do render inicial da tela.
+function _updateFilterSelectOptions(selector, defaultLabel, values, currentValue) {
+  const el = root.querySelector(selector);
+  if (!el) return;
+  const html = [`<option value="">${defaultLabel}</option>`]
+    .concat(values.map(v => `<option value="${v}" ${currentValue === v ? "selected" : ""}>${v}</option>`))
+    .join("");
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
 function eventoViewPartialUpdate() {
   const inscritos    = filteredInscritos();
   const paginated    = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
@@ -926,13 +972,25 @@ function eventoViewPartialUpdate() {
     filtersBtnDot.innerHTML = `${icon.filter()} Filtros${hasFilters() ? " ●" : ""}`;
   }
 
-  if (tbody) tbody.innerHTML = paginated.length
-    ? paginated.map(inscritoRow).join("")
-    : `<tr><td colspan="13" class="empty-row">Nenhum inscrito encontrado.</td></tr>`;
+  // [fix] Bug do filtro de vendedores: os arrays `vendedores`/`variantes` eram
+  // calculados aqui mas nunca aplicados aos <select> — a lista ficava sempre
+  // vazia ("Todos os vendedores") depois do primeiro snapshot de inscritos,
+  // porque o full render inicial roda ANTES do Firestore entregar os dados,
+  // e este é o único ponto que atualiza a tela depois disso.
+  _updateFilterSelectOptions('[data-filter="vendedor"]', "Todos os vendedores", vendedores, state.filters.vendedor);
+  _updateFilterSelectOptions('[data-filter="variante"]', "Todas as variantes", variantes, state.filters.variante);
 
-  if (mobileCards) mobileCards.innerHTML = paginated.length
-    ? paginated.map(inscritoCard).join("")
-    : `<p class="empty-row">Nenhum inscrito encontrado.</p>`;
+  if (tbody) tbody.innerHTML = !state.inscritosLoaded
+    ? `<tr><td colspan="13" class="empty-row">Carregando inscritos...</td></tr>`
+    : (paginated.length
+        ? paginated.map(inscritoRow).join("")
+        : `<tr><td colspan="13" class="empty-row">Nenhum inscrito encontrado.</td></tr>`);
+
+  if (mobileCards) mobileCards.innerHTML = !state.inscritosLoaded
+    ? `<p class="empty-row">Carregando inscritos...</p>`
+    : (paginated.length
+        ? paginated.map(inscritoCard).join("")
+        : `<p class="empty-row">Nenhum inscrito encontrado.</p>`);
 
   // Sync checkbox states after table/card repaint
   const filtered = filteredInscritos();
@@ -1182,6 +1240,9 @@ function openCurso(cursoId) {
   state.route = "curso";
   state.eventos    = [];
   state.encerrados = [];
+  // [fix] reseta as flags de loading — a UI mostra "carregando" até o próximo snapshot
+  state.eventosLoaded = false;
+  state.encerradosLoaded = false;
   state.search = "";
   state.eventoSearch = "";
   state.showPastEventos = false;
@@ -1203,12 +1264,14 @@ function openCurso(cursoId) {
   // Futuros: ativo === true
   unsubEventos = listenEventos(cursoId, (eventos) => {
     state.eventos = eventos;
+    state.eventosLoaded = true;
     onEventosUpdate();
   });
 
   // Encerrados: encerrado === true (sempre carregado para exibir o contador)
   unsubEncerrados = listenEncerrados(cursoId, (encerrados) => {
     state.encerrados = encerrados;
+    state.encerradosLoaded = true;
     onEventosUpdate();
   });
 
@@ -1234,6 +1297,8 @@ function openEvento(eventoId) {
   state.evento = evento;
   state.route = "evento";
   state.inscritos = [];
+  // [fix] reseta a flag de loading — a tabela mostra "carregando" até o próximo snapshot
+  state.inscritosLoaded = false;
   state.selectedIds = new Set();
   state.search = "";
   state.filters = { status: "", vendedor: "", variante: "", impresso: "" };
@@ -1243,6 +1308,7 @@ function openEvento(eventoId) {
   // [alteração 4] snapshot → partial update; scroll preservado
   unsubInscritos = listenInscritos(state.curso.id, eventoId, (inscritos) => {
     state.inscritos = inscritos;
+    state.inscritosLoaded = true;
     if (state.route === "evento") {
       if (root.querySelector("#inscritos-tbody")) {
         const scrollY = document.documentElement.scrollTop || document.body.scrollTop;
