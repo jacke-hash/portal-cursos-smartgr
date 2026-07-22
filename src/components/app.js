@@ -39,6 +39,21 @@ function isInscritoAtivo(i) {
 
 const PAGE_SIZE = 25;
 
+// [exceção] Cursos cujas variações (eventos) nunca devem ser ocultadas por
+// estarem encerradas/expiradas — ex.: "8° Congresso" tem uma variação passada
+// que precisa continuar visível. Identificamos pelo `id` do curso (o
+// productId da Shopify, imutável) e não pelo `nome`: o campo `nome` é
+// sincronizado a partir do título do produto na Shopify (scripts/sync-shopify.mjs)
+// e pode ser renomeado a qualquer momento sem aviso — hoje, por exemplo, o
+// nome real desse curso no Firestore já é "8º Congresso Mundial Smart GR +
+// Estética In São Paulo - 2027", não "8° Congresso". Usar o nome quebraria a
+// regra silenciosamente na próxima renomeação; o id nunca muda.
+const SEMPRE_EXIBIR_EVENTOS_ENCERRADOS_IDS = ["8928830193821"]; // 8° Congresso
+
+function deveExibirTodosEventos(curso) {
+  return SEMPRE_EXIBIR_EVENTOS_ENCERRADOS_IDS.includes(curso?.id);
+}
+
 // [alteração 2] Chave única para persistência de navegação no localStorage
 const LS_KEY = "smartgr_portal_v1";
 
@@ -418,6 +433,9 @@ function computeEventoSections() {
     past:   applySearch(past),
     pastCount:   past.length,
     futureCount: future.length,
+    // [exceção] ver SEMPRE_EXIBIR_EVENTOS_ENCERRADOS_IDS — força a exibição das
+    // variações encerradas para cursos específicos, sem afetar os demais.
+    sempreExibirEncerrados: deveExibirTodosEventos(state.curso),
   };
 }
 
@@ -427,12 +445,12 @@ function eventoGridContent(sections) {
   if (!state.eventosLoaded) {
     return `<div class="loading" style="grid-column:1/-1">Carregando eventos...</div>`;
   }
-  const { future, past } = sections;
+  const { future, past, sempreExibirEncerrados } = sections;
   let html = future.length
     ? future.map(eventoCard).join("")
     : `<div class="empty" style="grid-column:1/-1">Nenhum evento futuro encontrado.</div>`;
 
-  if (state.showPastEventos && past.length) {
+  if ((state.showPastEventos || sempreExibirEncerrados) && past.length) {
     html += `<div class="encerrados-sep" style="grid-column:1/-1"><span class="encerrados-label">Eventos Encerrados</span></div>`;
     html += past.map(eventoCard).join("");
   }
@@ -442,7 +460,7 @@ function eventoGridContent(sections) {
 function cursoView() {
   if (!state.curso) return empty("Curso não encontrado.");
   const sections = computeEventoSections();
-  const { pastCount, futureCount } = sections;
+  const { pastCount, futureCount, sempreExibirEncerrados } = sections;
 
   return `
     <section class="page-head">
@@ -458,7 +476,7 @@ function cursoView() {
     <div class="eventos-toolbar">
       <input class="search" data-action="search-evento"
              placeholder="Buscar evento..." value="${state.eventoSearch}">
-      ${pastCount > 0 ? `
+      ${pastCount > 0 && !sempreExibirEncerrados ? `
         <button class="btn-toggle-past ${state.showPastEventos ? "active" : ""}"
                 data-action="toggle-past-eventos">
           ${state.showPastEventos ? "Ocultar eventos encerrados" : `Mostrar encerrados (${pastCount})`}
@@ -1003,7 +1021,7 @@ function eventoViewPartialUpdate() {
 
 function cursoEventosPartialUpdate() {
   const sections = computeEventoSections();
-  const { pastCount, futureCount } = sections;
+  const { pastCount, futureCount, sempreExibirEncerrados } = sections;
 
   const statsBar    = root.querySelector("#curso-stats-bar");
   const eventosGrid = root.querySelector("#eventos-content");
@@ -1023,7 +1041,8 @@ function cursoEventosPartialUpdate() {
   }
 
   // pastCount surgiu (primeiro evento encerrado adicionado): re-renderiza para mostrar o toggle
-  if (pastCount > 0 && !toggleBtn) render();
+  // — exceto quando sempreExibirEncerrados, caso em que o toggle nunca é renderizado de propósito.
+  if (pastCount > 0 && !toggleBtn && !sempreExibirEncerrados) render();
 }
 
 // ─── EVENTOS ─────────────────────────────────────────────────────────────────

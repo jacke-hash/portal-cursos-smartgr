@@ -349,7 +349,15 @@ async function recalcCurso(db, productId) {
     }
   }
 
-  await db.patch(`cursos/${productId}`, { totalInscritos, proximoEventoLabel, updatedAt: new Date() });
+  // [fix] Garante nome/ativo mesmo quando este é o primeiro pedido do curso — sem
+  // isso o patch só grava os agregados e o documento nasce sem os campos que o
+  // portal usa para listar cursos (where ativo == true), deixando-o invisível
+  // até alguém rodar scripts/sync-shopify.mjs manualmente.
+  await db.patch(`cursos/${productId}`, {
+    nome: KNOWN_COURSES.get(productId) || '',
+    ativo: true,
+    totalInscritos, proximoEventoLabel, updatedAt: new Date(),
+  });
 }
 
 // ── Handlers de pedidos ───────────────────────────────────────────────────────
