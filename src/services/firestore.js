@@ -11,13 +11,10 @@ import {
 import { db } from "./firebase.js";
 
 export function listenCursos(callback) {
-  console.log("[Firestore] listenCursos: iniciando query...");
   const ref = collection(db, "cursos");
   return onSnapshot(
     query(ref, where("ativo", "==", true), orderBy("nome")),
     (snap) => {
-      console.log("[Firestore] Cursos encontrados:", snap.size);
-      console.log("[Firestore] Cursos:", snap.docs.map((d) => d.data()));
       callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     },
     (error) => {
@@ -27,12 +24,10 @@ export function listenCursos(callback) {
 }
 
 export function listenEventos(cursoId, callback) {
-  console.log(`[Firestore] listenEventos: cursoId=${cursoId}`);
   const ref = collection(db, "cursos", cursoId, "eventos");
   return onSnapshot(
     query(ref, where("ativo", "==", true), orderBy("data")),
     (snap) => {
-      console.log(`[Firestore] Eventos encontrados (curso ${cursoId}):`, snap.size);
       callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     },
     (error) => {
@@ -42,12 +37,10 @@ export function listenEventos(cursoId, callback) {
 }
 
 export function listenEncerrados(cursoId, callback) {
-  console.log(`[Firestore] listenEncerrados: cursoId=${cursoId}`);
   const ref = collection(db, "cursos", cursoId, "eventos");
   return onSnapshot(
     query(ref, where("encerrado", "==", true)),
     (snap) => {
-      console.log(`[Firestore] Encerrados encontrados (curso ${cursoId}):`, snap.size);
       const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       // ordenação client-side: mais recente primeiro
       docs.sort((a, b) => {
@@ -67,12 +60,10 @@ export function listenEncerrados(cursoId, callback) {
 }
 
 export function listenInscritos(cursoId, eventoId, callback) {
-  console.log(`[Firestore] listenInscritos: cursoId=${cursoId} eventoId=${eventoId}`);
   const ref = collection(db, "cursos", cursoId, "eventos", eventoId, "inscritos");
   return onSnapshot(
     query(ref, orderBy("dataCompra", "desc")),
     (snap) => {
-      console.log(`[Firestore] Inscritos encontrados (evento ${eventoId}):`, snap.size);
       callback(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     },
     (error) => {

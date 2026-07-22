@@ -711,6 +711,7 @@ async function sync() {
       await cursoRef.set(
         {
           totalInscritos: totalCurso,
+          totalEventos: eventosSnap.size,
           proximoEventoLabel,
           updatedAt: Timestamp.now(),
         },

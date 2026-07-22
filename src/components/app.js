@@ -40,6 +40,18 @@ function isInscritoAtivo(i) {
 
 const PAGE_SIZE = 25;
 
+// Única fonte de verdade do "filtro zerado" de inscritos — reusada em todo
+// ponto que reseta state.filters. Antes, esse literal era repetido em 6
+// lugares e 3 deles esqueciam a chave `inativos`, deixando o filtro de
+// inativos num estado inconsistente após certas navegações.
+const DEFAULT_INSCRITO_FILTERS = Object.freeze({
+  status: "", vendedor: "", variante: "", impresso: "", inativos: "",
+});
+
+// Direção padrão ao trocar a chave de ordenação dos cursos — cada opção já
+// "promete" uma direção pelo próprio nome (ex.: "Mais inscritos" = decrescente).
+const CURSO_SORT_DEFAULT_DIR = { nome: "asc", totalInscritos: "desc", updatedAt: "desc" };
+
 // [exceção] Cursos cujas variações (eventos) nunca devem ser ocultadas por
 // estarem encerradas/expiradas — ex.: "8° Congresso" tem uma variação passada
 // que precisa continuar visível. Identificamos pelo `id` do curso (o
@@ -159,6 +171,8 @@ function saveNav() {
       search: state.search,
       showHiddenCursos: state.showHiddenCursos,
       showFinishedCursos: state.showFinishedCursos,
+      cursoSortKey: state.cursoSortKey,
+      cursoSortDir: state.cursoSortDir,
       filters: state.filters,
       sortKey: state.sortKey,
       sortDir: state.sortDir,
@@ -190,7 +204,9 @@ let state = {
   showPastEventos: false,
   showHiddenCursos: false,   // filtro "Mostrar cursos ocultos" na Relação de Inscritos
   showFinishedCursos: false, // filtro "Mostrar cursos encerrados" na Relação de Inscritos
-  filters: { status: "", vendedor: "", variante: "", impresso: "", inativos: "" },
+  cursoSortKey: "nome",      // ordenação da listagem de cursos: nome | totalInscritos | updatedAt
+  cursoSortDir: "asc",
+  filters: { ...DEFAULT_INSCRITO_FILTERS },
   sortKey: "dataCompra",
   sortDir: "desc",
   page: 1,
@@ -253,6 +269,8 @@ function tryRestore() {
     if (saved?.search) state.search = saved.search;
     if (saved?.showHiddenCursos)   state.showHiddenCursos = true;
     if (saved?.showFinishedCursos) state.showFinishedCursos = true;
+    if (saved?.cursoSortKey) state.cursoSortKey = saved.cursoSortKey;
+    if (saved?.cursoSortDir) state.cursoSortDir = saved.cursoSortDir;
     const filtrosRow = root.querySelector("#cursos-filtros-row");
     if (filtrosRow) filtrosRow.innerHTML = cursosFiltrosRow();
     const grid = root.querySelector("#course-grid");
@@ -300,7 +318,7 @@ function tryRestore() {
     const evento = findEvento(savedEventoId);
     if (evento) {
       state.search = saved.search || "";
-      state.filters = { status: "", vendedor: "", variante: "", impresso: "", inativos: "", ...(saved.filters || {}) };
+      state.filters = { ...DEFAULT_INSCRITO_FILTERS, ...(saved.filters || {}) };
       state.sortKey = saved.sortKey || "dataCompra";
       state.sortDir = saved.sortDir || "desc";
       state.page = saved.page || 1;
@@ -387,6 +405,15 @@ function bindGlobalEvents() {
   root.addEventListener("click", handleClick);
   root.addEventListener("input", handleInput);
   root.addEventListener("change", handleChange);
+  // Fecha qualquer menu <details> (⋮ do curso, dropdown de exportar) ao
+  // clicar fora dele — <details> nativo só fecha reclicando no <summary>.
+  root.addEventListener("click", closeOpenDetailsOnOutsideClick);
+}
+
+function closeOpenDetailsOnOutsideClick(e) {
+  root.querySelectorAll("details[open]").forEach((d) => {
+    if (!d.contains(e.target)) d.removeAttribute("open");
+  });
 }
 
 // [alteração 8] removido bindDynamicEvents() vazio — era chamada morta
@@ -408,7 +435,28 @@ function filteredCursos() {
     const q = normalize(state.search);
     list = list.filter(c => normalize(c.nome).includes(q));
   }
-  return list;
+  return sortCursos(list);
+}
+
+function sortCursos(list) {
+  const key = state.cursoSortKey;
+  const dir = state.cursoSortDir;
+  return [...list].sort((a, b) => {
+    let av, bv;
+    if (key === "totalInscritos") {
+      av = a.totalInscritos || 0;
+      bv = b.totalInscritos || 0;
+    } else if (key === "updatedAt") {
+      av = a.updatedAt?.toDate?.() || new Date(0);
+      bv = b.updatedAt?.toDate?.() || new Date(0);
+    } else {
+      av = normalize(a.nome);
+      bv = normalize(b.nome);
+    }
+    if (av < bv) return dir === "asc" ? -1 : 1;
+    if (av > bv) return dir === "asc" ? 1 : -1;
+    return 0;
+  });
 }
 
 function courseGridContent() {
@@ -447,15 +495,38 @@ function cursosFiltrosRow() {
       <input type="checkbox" data-curso-filter="finished" ${state.showFinishedCursos ? "checked" : ""}>
       Mostrar cursos encerrados
     </label>
+    <div class="curso-sort-wrap">
+      <select class="filter-select" data-curso-sort-key>
+        <option value="nome" ${state.cursoSortKey === "nome" ? "selected" : ""}>Ordem alfabética</option>
+        <option value="totalInscritos" ${state.cursoSortKey === "totalInscritos" ? "selected" : ""}>Mais inscritos</option>
+        <option value="updatedAt" ${state.cursoSortKey === "updatedAt" ? "selected" : ""}>Última atualização</option>
+      </select>
+      <button class="btn-toggle-past btn-toggle-past--icon" data-action="toggle-curso-sort-dir" title="Inverter ordem">
+        ${state.cursoSortDir === "asc" ? "↑" : "↓"}
+      </button>
+    </div>
   `;
 }
 
 function courseCard(curso) {
   const cfg = cursoStatusConfig(curso);
+  const totalInscritos = curso.totalInscritos || 0;
+  // totalEventos só existe em cursos já recalculados pelo worker/sync depois
+  // desta melhoria — omite a linha em vez de arriscar mostrar "0" errado
+  // para cursos antigos que já têm eventos mas ainda não foram recontados.
+  const totalEventos = curso.totalEventos;
   return `
     <div class="course-card${cfg.cardClass ? " " + cfg.cardClass : ""}">
       <button class="course-card-main" data-action="open-curso" data-curso-id="${curso.id}">
-        <strong class="course-name">${curso.nome}</strong>
+        <div class="course-card-body">
+          <strong class="course-name">${curso.nome}</strong>
+          <div class="course-card-meta">
+            <span>👥 ${totalInscritos} inscrito${totalInscritos !== 1 ? "s" : ""}</span>
+            ${totalEventos !== undefined
+              ? `<span>📅 ${totalEventos} evento${totalEventos !== 1 ? "s" : ""} cadastrado${totalEventos !== 1 ? "s" : ""}</span>`
+              : ""}
+          </div>
+        </div>
         <div class="card-footer">
           <span class="card-updated-label">Atualizado em</span>
           <span class="card-updated-value">${formatSync(curso.updatedAt)}</span>
@@ -503,10 +574,6 @@ function computeEventoSections() {
   // state.encerrados = encerrado: true (passados) — ordenados por data desc (client-side)
   const future = dedupeEventos(state.eventos);
   const past   = dedupeEventos(state.encerrados);
-
-  console.log("[SmartGR] Eventos totais:", future.length + past.length);
-  console.log("[SmartGR] Eventos futuros:", future.length);
-  console.log("[SmartGR] Eventos encerrados:", past.length);
 
   const q = normalize(state.eventoSearch.trim());
   const applySearch = list => q
@@ -991,6 +1058,12 @@ function inscritosSelecionados() {
     .filter(Boolean);
 }
 
+// Confirmação antes de ações em lote — evita que um clique errado em
+// "selecionar todos" + um botão de lote altere dezenas de inscritos sem querer.
+function confirmBatchAction(n) {
+  return confirm(`Tem certeza que deseja alterar ${n} inscrito${n > 1 ? "s" : ""}?\nEssa ação não poderá ser desfeita facilmente.`);
+}
+
 function _partialUpdateSelection() {
   const batchBar = root.querySelector("#batch-bar");
   if (batchBar) batchBar.outerHTML = batchActionsBar();
@@ -1042,7 +1115,6 @@ function eventoViewPartialUpdate() {
   const batchBar       = root.querySelector("#batch-bar");
   const printCounter   = root.querySelector(".print-counter-bar");
   const exportDetails  = root.querySelector("#export-details");
-  const filtersToolbar = root.querySelector(".filters-toolbar");
   const filtersBtnDot  = root.querySelector(".btn-filters-toggle");
 
   if (statsBar) statsBar.innerHTML =
@@ -1146,7 +1218,7 @@ function handleClick(e) {
     } else if (action === "open-evento") {
       openEvento(el.dataset.eventoId);
     } else if (action === "clear-filters") {
-      state.filters = { status: "", vendedor: "", variante: "", impresso: "", inativos: "" };
+      state.filters = { ...DEFAULT_INSCRITO_FILTERS };
       state.search = "";
       state.page = 1;
       saveNav();
@@ -1171,6 +1243,13 @@ function handleClick(e) {
       updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.FINISHED });
     } else if (action === "curso-reativar") {
       updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.ACTIVE });
+    } else if (action === "toggle-curso-sort-dir") {
+      state.cursoSortDir = state.cursoSortDir === "asc" ? "desc" : "asc";
+      saveNav();
+      const filtrosRow = root.querySelector("#cursos-filtros-row");
+      if (filtrosRow) filtrosRow.innerHTML = cursosFiltrosRow();
+      const grid = root.querySelector("#course-grid");
+      if (grid) grid.innerHTML = courseGridContent();
 
     } else if (action === "toggle-impresso") {
       const id = el.dataset.inscritoId;
@@ -1218,16 +1297,19 @@ function handleClick(e) {
 
     // ── Ações em lote ─────────────────────────────────────────────────────────
     } else if (action === "batch-impresso") {
+      if (!confirmBatchAction(state.selectedIds.size)) return;
       for (const id of state.selectedIds) {
         updateInscrito(state.curso.id, state.evento.id, id, { impresso: true, impressoEm: new Date(), impressoPor: "" });
       }
     } else if (action === "batch-confirmado") {
+      if (!confirmBatchAction(state.selectedIds.size)) return;
       for (const id of state.selectedIds) {
         updateInscrito(state.curso.id, state.evento.id, id, { status: "Confirmado" });
       }
       state.selectedIds = new Set();
       _partialUpdateSelection();
     } else if (action === "batch-presente") {
+      if (!confirmBatchAction(state.selectedIds.size)) return;
       for (const id of state.selectedIds) {
         updateInscrito(state.curso.id, state.evento.id, id, { status: "Presente" });
       }
@@ -1317,6 +1399,15 @@ function handleChange(e) {
     const grid = root.querySelector("#course-grid");
     if (grid) grid.innerHTML = courseGridContent();
   }
+  if (e.target.dataset.cursoSortKey !== undefined) {
+    state.cursoSortKey = e.target.value;
+    state.cursoSortDir = CURSO_SORT_DEFAULT_DIR[e.target.value] || "asc";
+    saveNav();
+    const filtrosRow = root.querySelector("#cursos-filtros-row");
+    if (filtrosRow) filtrosRow.innerHTML = cursosFiltrosRow();
+    const grid = root.querySelector("#course-grid");
+    if (grid) grid.innerHTML = courseGridContent();
+  }
   if (e.target.dataset.filter !== undefined) {
     state.filters[e.target.dataset.filter] = e.target.value;
     state.page = 1;
@@ -1347,7 +1438,7 @@ function goToCursos() {
   state.search = "";
   state.eventoSearch = "";
   state.showPastEventos = false;
-  state.filters = { status: "", vendedor: "", variante: "", impresso: "" };
+  state.filters = { ...DEFAULT_INSCRITO_FILTERS };
   state.page = 1;
   saveNav();
   render();
@@ -1405,7 +1496,7 @@ function goToCurso() {
   state.inscritos = [];
   state.selectedIds = new Set();
   state.search = "";
-  state.filters = { status: "", vendedor: "", variante: "", impresso: "" };
+  state.filters = { ...DEFAULT_INSCRITO_FILTERS };
   state.page = 1;
   saveNav();
   render();
@@ -1421,7 +1512,7 @@ function openEvento(eventoId) {
   state.inscritosLoaded = false;
   state.selectedIds = new Set();
   state.search = "";
-  state.filters = { status: "", vendedor: "", variante: "", impresso: "" };
+  state.filters = { ...DEFAULT_INSCRITO_FILTERS };
   state.page = 1;
   saveNav();
   if (unsubInscritos) unsubInscritos();
@@ -1506,6 +1597,5 @@ function exportTudo(fmt)     { exportList([...state.inscritos], "tudo", fmt); }
 function exportImpressos()   { exportList(state.inscritos.filter(i => i.impresso), "impressos"); }
 function exportPendentes()   { exportList(state.inscritos.filter(i => !i.impresso), "pendentes"); }
 function exportSelecionados() {
-  const rows = [...state.selectedIds].map(id => state.inscritos.find(i => i.id === id)).filter(Boolean);
-  exportList(rows, "selecionados");
+  exportList(inscritosSelecionados(), "selecionados");
 }

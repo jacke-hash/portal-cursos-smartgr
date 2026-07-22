@@ -356,7 +356,7 @@ async function recalcCurso(db, productId) {
   const patch = {
     nome: KNOWN_COURSES.get(productId) || '',
     ativo: true,
-    totalInscritos, proximoEventoLabel, updatedAt: new Date(),
+    totalInscritos, totalEventos: eventos.length, proximoEventoLabel, updatedAt: new Date(),
   };
 
   // status: só é definido na criação do documento. Nunca sobrescrever aqui —
