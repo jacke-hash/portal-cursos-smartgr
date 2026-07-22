@@ -90,3 +90,8 @@ export function updateEvento(cursoId, eventoId, patch) {
   const ref = doc(db, "cursos", cursoId, "eventos", eventoId);
   return updateDoc(ref, { ...patch, updatedAt: serverTimestamp() });
 }
+
+export function updateCurso(cursoId, patch) {
+  const ref = doc(db, "cursos", cursoId);
+  return updateDoc(ref, { ...patch, updatedAt: serverTimestamp() });
+}

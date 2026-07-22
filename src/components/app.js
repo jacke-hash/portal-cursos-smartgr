@@ -3,6 +3,7 @@ import {
   listenEncerrados,
   listenEventos,
   listenInscritos,
+  updateCurso,
   updateInscrito,
 } from "../services/firestore.js";
 import { formatDate, formatSync, money, statusClass } from "../utils/format.js";
@@ -52,6 +53,45 @@ const SEMPRE_EXIBIR_EVENTOS_ENCERRADOS_IDS = ["8928830193821"]; // 8° Congresso
 
 function deveExibirTodosEventos(curso) {
   return SEMPRE_EXIBIR_EVENTOS_ENCERRADOS_IDS.includes(curso?.id);
+}
+
+// ─── STATUS DE CURSO (arquivamento/ocultação) ─────────────────────────────────
+// Única fonte de verdade sobre visibilidade/aparência de cursos por status.
+// Toda a UI (menu do card, filtros, badge, opacidade) deriva daqui — nenhuma
+// outra parte do código deve comparar `curso.status` diretamente.
+const CURSO_STATUS = {
+  ACTIVE:   "active",
+  HIDDEN:   "hidden",
+  FINISHED: "finished",
+  DRAFT:    "draft",
+};
+
+// `toggleKey` aponta para o campo em `state` que controla a exibição desse
+// status na listagem (null = sempre visível). Adicionar um status novo no
+// futuro é só acrescentar uma entrada aqui (e, se precisar de filtro próprio,
+// um novo toggle em `state` + checkbox em cursosView).
+const CURSO_STATUS_CONFIG = {
+  [CURSO_STATUS.ACTIVE]:   { badge: null,        cardClass: "",                       toggleKey: null },
+  [CURSO_STATUS.HIDDEN]:   { badge: "OCULTO",    cardClass: "course-card--hidden",     toggleKey: "showHiddenCursos" },
+  [CURSO_STATUS.FINISHED]: { badge: "ENCERRADO", cardClass: "course-card--finished",   toggleKey: "showFinishedCursos" },
+  // Rascunho ainda não tem ação própria na UI — por ora fica atrás do mesmo
+  // toggle de "ocultos", já que também não deve aparecer na listagem padrão.
+  [CURSO_STATUS.DRAFT]:    { badge: "RASCUNHO",  cardClass: "course-card--hidden",     toggleKey: "showHiddenCursos" },
+};
+
+// Retrocompatibilidade: cursos gravados antes desta feature não têm o campo
+// `status` no Firestore — tratamos como "active" sem nunca escrever nada no banco.
+function getCursoStatus(curso) {
+  return CURSO_STATUS_CONFIG[curso?.status] ? curso.status : CURSO_STATUS.ACTIVE;
+}
+
+function cursoStatusConfig(curso) {
+  return CURSO_STATUS_CONFIG[getCursoStatus(curso)];
+}
+
+function isCursoVisivelNaListagem(curso) {
+  const toggleKey = cursoStatusConfig(curso).toggleKey;
+  return !toggleKey || !!state[toggleKey];
 }
 
 // [alteração 2] Chave única para persistência de navegação no localStorage
@@ -117,6 +157,8 @@ function saveNav() {
       eventoId: state.evento?.id || null,
       eventoSearch: state.eventoSearch,
       search: state.search,
+      showHiddenCursos: state.showHiddenCursos,
+      showFinishedCursos: state.showFinishedCursos,
       filters: state.filters,
       sortKey: state.sortKey,
       sortDir: state.sortDir,
@@ -146,6 +188,8 @@ let state = {
   search: "",
   eventoSearch: "",
   showPastEventos: false,
+  showHiddenCursos: false,   // filtro "Mostrar cursos ocultos" na Relação de Inscritos
+  showFinishedCursos: false, // filtro "Mostrar cursos encerrados" na Relação de Inscritos
   filters: { status: "", vendedor: "", variante: "", impresso: "", inativos: "" },
   sortKey: "dataCompra",
   sortDir: "desc",
@@ -207,6 +251,10 @@ function tryRestore() {
 
   if (!saved || !saved.cursoId || saved.route === "cursos") {
     if (saved?.search) state.search = saved.search;
+    if (saved?.showHiddenCursos)   state.showHiddenCursos = true;
+    if (saved?.showFinishedCursos) state.showFinishedCursos = true;
+    const filtrosRow = root.querySelector("#cursos-filtros-row");
+    if (filtrosRow) filtrosRow.innerHTML = cursosFiltrosRow();
     const grid = root.querySelector("#course-grid");
     if (grid) grid.innerHTML = courseGridContent();
     return;
@@ -355,9 +403,12 @@ function render() {
 // ─── VIEWS ───────────────────────────────────────────────────────────────────
 
 function filteredCursos() {
-  if (!state.search) return state.cursos;
-  const q = normalize(state.search);
-  return state.cursos.filter(c => normalize(c.nome).includes(q));
+  let list = state.cursos.filter(isCursoVisivelNaListagem);
+  if (state.search) {
+    const q = normalize(state.search);
+    list = list.filter(c => normalize(c.nome).includes(q));
+  }
+  return list;
 }
 
 function courseGridContent() {
@@ -377,21 +428,55 @@ function cursosView() {
       </div>
       <input class="search" data-action="search-cursos" placeholder="Buscar curso..." value="${state.search}">
     </section>
+    <div class="cursos-filtros-row" id="cursos-filtros-row">
+      ${cursosFiltrosRow()}
+    </div>
     <section class="course-grid" id="course-grid">
       ${courseGridContent()}
     </section>
   `;
 }
 
-function courseCard(curso) {
+function cursosFiltrosRow() {
   return `
-    <button class="course-card" data-action="open-curso" data-curso-id="${curso.id}">
-      <strong class="course-name">${curso.nome}</strong>
-      <div class="card-footer">
-        <span class="card-updated-label">Atualizado em</span>
-        <span class="card-updated-value">${formatSync(curso.updatedAt)}</span>
+    <label class="curso-filter-check">
+      <input type="checkbox" data-curso-filter="hidden" ${state.showHiddenCursos ? "checked" : ""}>
+      Mostrar cursos ocultos
+    </label>
+    <label class="curso-filter-check">
+      <input type="checkbox" data-curso-filter="finished" ${state.showFinishedCursos ? "checked" : ""}>
+      Mostrar cursos encerrados
+    </label>
+  `;
+}
+
+function courseCard(curso) {
+  const cfg = cursoStatusConfig(curso);
+  return `
+    <div class="course-card${cfg.cardClass ? " " + cfg.cardClass : ""}">
+      <button class="course-card-main" data-action="open-curso" data-curso-id="${curso.id}">
+        <strong class="course-name">${curso.nome}</strong>
+        <div class="card-footer">
+          <span class="card-updated-label">Atualizado em</span>
+          <span class="card-updated-value">${formatSync(curso.updatedAt)}</span>
+        </div>
+      </button>
+      ${cfg.badge ? `<span class="curso-status-badge">${cfg.badge}</span>` : ""}
+      ${cursoMenu(curso)}
+    </div>
+  `;
+}
+
+function cursoMenu(curso) {
+  return `
+    <details class="curso-menu">
+      <summary class="curso-menu-btn" title="Mais opções">⋮</summary>
+      <div class="curso-menu-dropdown">
+        <button class="dd-item" data-action="curso-ocultar" data-curso-id="${curso.id}">Ocultar curso</button>
+        <button class="dd-item" data-action="curso-encerrar" data-curso-id="${curso.id}">Marcar como encerrado</button>
+        <button class="dd-item" data-action="curso-reativar" data-curso-id="${curso.id}">Reativar curso</button>
       </div>
-    </button>
+    </details>
   `;
 }
 
@@ -1078,6 +1163,15 @@ function handleClick(e) {
       state.showPastEventos = !state.showPastEventos;
       saveNav();
       cursoEventosPartialUpdate();
+
+    // ── Status do curso (arquivamento/ocultação) ───────────────────────────────
+    } else if (action === "curso-ocultar") {
+      updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.HIDDEN });
+    } else if (action === "curso-encerrar") {
+      updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.FINISHED });
+    } else if (action === "curso-reativar") {
+      updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.ACTIVE });
+
     } else if (action === "toggle-impresso") {
       const id = el.dataset.inscritoId;
       const inscrito = state.inscritos.find(i => i.id === id);
@@ -1216,6 +1310,13 @@ function handleInput(e) {
 }
 
 function handleChange(e) {
+  if (e.target.dataset.cursoFilter !== undefined) {
+    const key = e.target.dataset.cursoFilter === "hidden" ? "showHiddenCursos" : "showFinishedCursos";
+    state[key] = e.target.checked;
+    saveNav();
+    const grid = root.querySelector("#course-grid");
+    if (grid) grid.innerHTML = courseGridContent();
+  }
   if (e.target.dataset.filter !== undefined) {
     state.filters[e.target.dataset.filter] = e.target.value;
     state.page = 1;

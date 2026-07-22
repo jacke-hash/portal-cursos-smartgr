@@ -135,20 +135,112 @@ h2 {
 }
 
 .course-card {
+  position: relative;
+}
+.course-card-main {
+  width: 100%;
+  height: 100%;
   background: var(--white);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 20px 22px;
   text-align: left;
-  transition: box-shadow .15s, border-color .15s;
+  transition: box-shadow .15s, border-color .15s, opacity .15s, filter .15s;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 20px;
 }
-.course-card:hover {
+.course-card-main:hover {
   border-color: var(--blue);
   box-shadow: 0 4px 24px rgba(56,83,132,.1);
+}
+
+/* Curso oculto: opacidade reduzida (menu e badge continuam legíveis) */
+.course-card--hidden .course-card-main {
+  opacity: .55;
+}
+/* Curso encerrado: aparência levemente acinzentada */
+.course-card--finished .course-card-main {
+  filter: grayscale(.4);
+  opacity: .85;
+}
+
+.curso-status-badge {
+  position: absolute;
+  top: 14px;
+  right: 44px;
+  z-index: 1;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* ── MENU DO CARD DE CURSO (⋮) ── */
+.curso-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+}
+.curso-menu > summary { list-style: none; cursor: pointer; }
+.curso-menu > summary::-webkit-details-marker { display: none; }
+.curso-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  transition: background .15s, color .15s;
+}
+.curso-menu-btn:hover {
+  background: var(--soft);
+  color: var(--blue);
+}
+.curso-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,.12);
+  min-width: 190px;
+  padding: 6px 0;
+}
+
+/* ── FILTROS DE CURSO (checkboxes) ── */
+.cursos-filtros-row {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: -8px 0 20px;
+}
+.curso-filter-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.curso-filter-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--blue);
 }
 
 .course-name {
@@ -944,6 +1036,7 @@ h2 {
 @media (max-width: 480px) {
   .stats-bar { grid-template-columns: 1fr 1fr; }
   .export-dropdown { right: auto; left: 0; }
+  .curso-menu-dropdown { right: auto; left: 0; }
 }
 
 /* ── INSCRITOS INATIVOS (cancelado, reembolsado, expirado, etc.) ── */

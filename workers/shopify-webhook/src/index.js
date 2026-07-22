@@ -353,11 +353,22 @@ async function recalcCurso(db, productId) {
   // isso o patch só grava os agregados e o documento nasce sem os campos que o
   // portal usa para listar cursos (where ativo == true), deixando-o invisível
   // até alguém rodar scripts/sync-shopify.mjs manualmente.
-  await db.patch(`cursos/${productId}`, {
+  const patch = {
     nome: KNOWN_COURSES.get(productId) || '',
     ativo: true,
     totalInscritos, proximoEventoLabel, updatedAt: new Date(),
-  });
+  };
+
+  // status: só é definido na criação do documento. Nunca sobrescrever aqui —
+  // o operador controla esse campo pelo menu de curso no portal (ocultar/
+  // encerrar/reativar); se todo pedido reescrevesse status:'active', qualquer
+  // curso ocultado/encerrado voltaria a "active" sozinho no próximo pedido.
+  const existing = await db.get(`cursos/${productId}`);
+  if (!existing || existing.status === undefined) {
+    patch.status = 'active';
+  }
+
+  await db.patch(`cursos/${productId}`, patch);
 }
 
 // ── Handlers de pedidos ───────────────────────────────────────────────────────
