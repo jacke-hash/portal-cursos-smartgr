@@ -1,0 +1,56 @@
+name: Reconciliação de Pedidos Shopify → Firestore
+
+on:
+  schedule:
+    # 6h horário de Brasília (BRT = UTC-3, sem horário de verão) = 9h UTC
+    - cron: '0 9 * * *'
+  # Permite rodar manualmente pelo GitHub, com janela customizável para validação
+  workflow_dispatch:
+    inputs:
+      window_hours:
+        description: 'Janela em horas para buscar pedidos pagos (padrão: 48)'
+        required: false
+        default: '48'
+
+jobs:
+  reconciliacao:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      # TEMPORÁRIO — remover este step após confirmar que o domínio está verificado.
+      - name: "[TEMP] Validar domínio Resend"
+        run: node scripts/check-resend-domain.mjs
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+
+      - name: Executar reconciliação
+        run: node scripts/reconciliacao-pedidos.mjs
+        env:
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL_TO: jacke@smartgr.com.br
+          WINDOW_HOURS: ${{ github.event.inputs.window_hours || '48' }}
+
+      - name: Avisar falha da própria reconciliação
+        if: failure()
+        run: |
+          echo "::error::A reconciliação de pedidos FALHOU ao executar — nenhum alerta de pedido ausente pôde ser verificado hoje."
+          {
+            echo "## ⚠️ Reconciliação de pedidos FALHOU"
+            echo ""
+            echo "O script não completou a execução (Shopify/Firebase/Resend inacessível ou erro interno)."
+            echo "Nenhum pedido ausente pôde ser verificado nesta execução — veja o log do step \"Executar reconciliação\" acima para o erro exato."
+          } >> "$GITHUB_STEP_SUMMARY"
