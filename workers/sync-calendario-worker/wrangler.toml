@@ -1,0 +1,14 @@
+name = "sync-calendario-worker"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Roda de verdade a cada 15 minutos (sem os atrasos do GitHub Actions scheduler)
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Variáveis não-sensíveis (o ID da planilha não precisa ser secret)
+[vars]
+SHEETS_CALENDARIO_ID = "1gsSMkeQceBYTRa9IKshvuNqa-WGImLNUcPKt2h3iSJg"
+
+# FIREBASE_SERVICE_ACCOUNT_JSON é um SECRET — não vai neste arquivo.
+# Configure com: wrangler secret put FIREBASE_SERVICE_ACCOUNT_JSON

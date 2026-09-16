@@ -420,8 +420,13 @@ async function processOrder(db, order, financialStatus, env) {
     console.log(`[processOrder] Financeiro: subtotal=${fin.precoCatalogo * fin.quantidade} descontoAplicado=${fin.descontoAplicado} valorFinalPago=${fin.valorFinalPago} cliente="${cust.cliente}"`);
 
     const existing = await db.get(path);
-    // Reaproveita o CPF já salvo — nunca sobrescreve com vazio; só busca quando ainda não há valor.
-    const cpf = existing?.cpf || await getCustomerCpf(order.customer?.id, env.SHOPIFY_ACCESS_TOKEN);
+    // O checkout grava o CPF em note_attributes (cpf_cliente), não no metafield
+    // custom.cpf do cliente — esse metafield praticamente nunca é preenchido.
+    // Reaproveita o CPF já salvo — nunca sobrescreve com vazio; senão usa o
+    // note_attribute (grátis, já veio no payload); só cai pra API do metafield
+    // como último recurso, pra pedidos antigos que não tinham esse attribute.
+    const cpfAttr = order.note_attributes?.find(a => a.name === 'cpf_cliente')?.value || '';
+    const cpf = existing?.cpf || cpfAttr || await getCustomerCpf(order.customer?.id, env.SHOPIFY_ACCESS_TOKEN);
 
     const base = {
       pedido: order.name, shopifyId: String(order.id),

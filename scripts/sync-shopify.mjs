@@ -582,9 +582,13 @@ async function sync() {
       const isAtivo = orderFinancialStatus === 'paid';
       const statusLabel = shopifyStatusLabel(orderFinancialStatus, order.cancelled_at);
 
-      // Reaproveita o CPF já salvo — nunca sobrescreve com vazio; só busca quando ainda não há valor.
+      // O checkout grava o CPF em note_attributes (cpf_cliente), não no metafield
+      // custom.cpf do cliente — esse metafield praticamente nunca é preenchido.
+      // Reaproveita o CPF já salvo; senão usa o note_attribute (grátis, já veio
+      // no payload); só cai pra API do metafield como último recurso.
       const cpfExistente = snap.exists ? (snap.data().cpf || '') : '';
-      const cpf = cpfExistente || await getCustomerCpf(order.customer?.id);
+      const cpfAttr = order.note_attributes?.find(a => a.name === 'cpf_cliente')?.value || '';
+      const cpf = cpfExistente || cpfAttr || await getCustomerCpf(order.customer?.id);
 
       try {
         if (snap.exists) {

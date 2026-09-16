@@ -280,20 +280,50 @@ h2 {
   line-height: 1.4;
 }
 
-.course-card-meta {
+.course-card-stats {
+  display: flex;
+  gap: 22px;
+}
+.course-card-stat {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 12.5px;
+  gap: 2px;
+}
+.course-card-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--blue);
+  line-height: 1.1;
+}
+.course-card-stat-label {
+  font-size: 11.5px;
   color: var(--muted);
 }
 
 .card-footer {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
   border-top: 1px solid var(--line);
   padding-top: 12px;
+}
+.card-footer-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.card-footer-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.course-card-main:hover .card-footer-hint,
+.course-card-main:focus-visible .card-footer-hint {
+  opacity: 1;
 }
 .card-updated-label {
   font-size: 10px;
@@ -471,6 +501,19 @@ h2 {
   transition: box-shadow .15s;
 }
 .stat-card:hover { box-shadow: 0 8px 28px rgba(0,0,0,.09); }
+
+/* Stat cards clicáveis — funcionam como atalho de filtro rápido por status */
+.stat-card--clickable {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: box-shadow .15s, border-color .15s;
+}
+.stat-card--clickable:hover { border-color: var(--blue); }
+.stat-card--active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(36,83,136,.12);
+}
 
 .stat-icon {
   display: flex;
@@ -992,6 +1035,11 @@ h2 {
   color: var(--muted);
   font-weight: 600;
 }
+.mc-qtd {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
 .mc-valor {
   font-size: 14px;
   font-weight: 700;
@@ -1154,3 +1202,31 @@ h2 {
 
 .stat-card--parcialmente-reembolsado .stat-icon,
 .stat-card--parcialmente-reembolsado .stat-value { color: #7e22ce; }
+
+/* ── TOAST DE ERRO (falha ao salvar no Firestore) ── */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  background: var(--ink);
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 32px rgba(0,0,0,.25);
+  opacity: 0;
+  transition: opacity .2s, transform .2s;
+  z-index: 200;
+  max-width: min(420px, 90vw);
+  text-align: center;
+}
+.toast--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+@media (max-width: 480px) {
+  .toast { left: 16px; right: 16px; transform: translateY(12px); max-width: none; }
+  .toast--visible { transform: translateY(0); }
+}

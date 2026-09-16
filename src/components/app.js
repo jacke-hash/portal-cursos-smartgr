@@ -1,4 +1,5 @@
 import {
+  getInscritosConfirmados,
   listenCursos,
   listenEncerrados,
   listenEventos,
@@ -421,7 +422,11 @@ function render() {
   const scrollY = document.documentElement.scrollTop || document.body.scrollTop;
   const view = root.querySelector("#view");
   if (state.route === "cursos") view.innerHTML = cursosView();
-  else if (state.route === "curso") view.innerHTML = cursoView();
+  else if (state.route === "curso") {
+    const sections = computeEventoSections();
+    view.innerHTML = cursoView();
+    hydrateConfirmados(visibleEventosParaConfirmados(sections));
+  }
   else if (state.route === "evento") view.innerHTML = eventoView();
   document.documentElement.scrollTop = scrollY;
   document.body.scrollTop = scrollY;
@@ -520,16 +525,24 @@ function courseCard(curso) {
       <button class="course-card-main" data-action="open-curso" data-curso-id="${curso.id}">
         <div class="course-card-body">
           <strong class="course-name">${curso.nome}</strong>
-          <div class="course-card-meta">
-            <span>👥 ${totalInscritos} inscrito${totalInscritos !== 1 ? "s" : ""}</span>
-            ${totalEventos !== undefined
-              ? `<span>📅 ${totalEventos} evento${totalEventos !== 1 ? "s" : ""} cadastrado${totalEventos !== 1 ? "s" : ""}</span>`
-              : ""}
+          <div class="course-card-stats">
+            <div class="course-card-stat">
+              <span class="course-card-stat-value">${totalInscritos}</span>
+              <span class="course-card-stat-label">inscrito${totalInscritos !== 1 ? "s" : ""}</span>
+            </div>
+            ${totalEventos !== undefined ? `
+            <div class="course-card-stat">
+              <span class="course-card-stat-value">${totalEventos}</span>
+              <span class="course-card-stat-label">evento${totalEventos !== 1 ? "s" : ""}</span>
+            </div>` : ""}
           </div>
         </div>
         <div class="card-footer">
-          <span class="card-updated-label">Atualizado em</span>
-          <span class="card-updated-value">${formatSync(curso.updatedAt)}</span>
+          <div class="card-footer-info">
+            <span class="card-updated-label">Atualizado em</span>
+            <span class="card-updated-value">${formatSync(curso.updatedAt)}</span>
+          </div>
+          <span class="card-footer-hint">Ver turmas →</span>
         </div>
       </button>
       ${cfg.badge ? `<span class="curso-status-badge">${cfg.badge}</span>` : ""}
@@ -589,6 +602,39 @@ function computeEventoSections() {
     // variações encerradas para cursos específicos, sem afetar os demais.
     sempreExibirEncerrados: deveExibirTodosEventos(state.curso),
   };
+}
+
+// Cache em memória de "confirmados" por evento — o card não lê mais o campo agregado
+// do doc do evento (ficava desatualizado quando o status mudava pelo roster, sem trigger
+// nenhum recalculando o agregado). Guarda o valor já calculado para não reconsultar o
+// Firestore a cada re-render; é invalidado nos pontos onde o status de um inscrito muda.
+const _confirmadosCache = new Map(); // eventoId -> count
+
+async function fetchConfirmadosCount(cursoId, eventoId) {
+  const docs = await getInscritosConfirmados(cursoId, eventoId);
+  return docs.filter(isInscritoAtivo).length;
+}
+
+// Eventos que precisam ter "confirmados" calculado para a seção atualmente visível
+// (futuros sempre; encerrados só quando o toggle "Mostrar encerrados" está aberto).
+function visibleEventosParaConfirmados(sections) {
+  const { future, past, sempreExibirEncerrados } = sections;
+  return (state.showPastEventos || sempreExibirEncerrados) ? [...future, ...past] : future;
+}
+
+// Busca "confirmados" em paralelo só para os eventos ainda não cacheados e atualiza o
+// card correspondente assim que cada resposta chega — não bloqueia a renderização inicial.
+function hydrateConfirmados(eventos) {
+  const pendentes = eventos.filter(ev => !_confirmadosCache.has(ev.id));
+  pendentes.forEach(ev => {
+    fetchConfirmadosCount(state.curso.id, ev.id)
+      .then(count => {
+        _confirmadosCache.set(ev.id, count);
+        const el = root.querySelector(`[data-confirmados-for="${CSS.escape(ev.id)}"]`);
+        if (el) el.textContent = count;
+      })
+      .catch(() => {}); // falha silenciosa: mantém "…"; próxima hidratação tenta de novo
+  });
 }
 
 // [alteração 1] Exibe encerrados apenas quando toggle ativo
@@ -659,7 +705,7 @@ function eventoCard(evento) {
       ${statusBadge}
       <div class="card-meta">
         <span><b>${evento.totalInscritos || 0}</b> inscritos</span>
-        <span><b>${evento.confirmados || 0}</b> confirmados</span>
+        <span><b data-confirmados-for="${evento.id}">${_confirmadosCache.has(evento.id) ? _confirmadosCache.get(evento.id) : "…"}</b> confirmados</span>
       </div>
     </button>
   `;
@@ -723,7 +769,7 @@ function _filtersBar(vendedores, variantes) {
     </div>`;
 }
 
-function _tableSection(paginated, colSpan = 13) {
+function _tableSection(paginated, colSpan = 14) {
   const filtered = filteredInscritos();
   const allSelected = filtered.length > 0 && filtered.every(i => state.selectedIds.has(i.id));
   // [fix] enquanto o primeiro snapshot de inscritos não chegou, mostra "carregando"
@@ -749,6 +795,7 @@ function _tableSection(paginated, colSpan = 13) {
             ${th("email", "Email")}
             ${th("cliente", "Cliente")}
             ${th("variante", "Variante")}
+            ${th("quantidade", "Qtd")}
             ${th("vendedor", "Vendedor")}
             <th>Status</th>
             <th>Observação</th>
@@ -760,6 +807,29 @@ function _tableSection(paginated, colSpan = 13) {
         </tbody>
       </table>
     </div>`;
+}
+
+// Única fonte da barra de stats do evento — chamada tanto no render completo
+// quanto no update parcial, pra nunca mais divergir entre os dois caminhos
+// (foi exatamente essa divergência que causou o bug do filtro de vendedores).
+// Os cards com filterValue funcionam como atalho: clicar aplica/remove
+// state.filters.status, reaproveitando o filtro que já existe.
+function eventoStatsBarContent(stats) {
+  return (
+    statCard("Total Pagos",      stats.total,          "",               icon.users(), "") +
+    statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle(), "Confirmado") +
+    statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3(), "Não Confirmado") +
+    statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin(), "Presente") +
+    statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX(), "Ausente") +
+    statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus(), "Desistente") +
+    statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle(), "Cancelado") +
+    statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet(), "Reembolsado") +
+    (stats.parcReembolsados > 0 ? statCard("Parc. Reembolsados", stats.parcReembolsados, "parcialmente-reembolsado", icon.wallet(), "Parcialmente Reembolsado") : "") +
+    (stats.expirados        > 0 ? statCard("Expirados",           stats.expirados,         "expirado",                icon.clock3(), "Expirado")  : "") +
+    (stats.pendentes        > 0 ? statCard("Pendentes",           stats.pendentes,          "pendente",                icon.clock3(), "Pendente")  : "") +
+    (stats.anulados         > 0 ? statCard("Anulados",            stats.anulados,           "anulado",                 icon.xCircle(), "Anulado") : "") +
+    (stats.autorizados      > 0 ? statCard("Autorizados",         stats.autorizados,        "autorizado",              icon.clock3(), "Autorizado")  : "")
+  );
 }
 
 function eventoView() {
@@ -786,19 +856,7 @@ function eventoView() {
     </section>
 
     <div class="stats-bar" id="stats-bar">
-      ${statCard("Total Pagos",      stats.total,          "",               icon.users())}
-      ${statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle())}
-      ${statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3())}
-      ${statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin())}
-      ${statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX())}
-      ${statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus())}
-      ${statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle())}
-      ${statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet())}
-      ${stats.parcReembolsados > 0 ? statCard("Parc. Reembolsados", stats.parcReembolsados, "parcialmente-reembolsado", icon.wallet()) : ""}
-      ${stats.expirados        > 0 ? statCard("Expirados",           stats.expirados,         "expirado",                icon.clock3())  : ""}
-      ${stats.pendentes        > 0 ? statCard("Pendentes",           stats.pendentes,          "pendente",                icon.clock3())  : ""}
-      ${stats.anulados         > 0 ? statCard("Anulados",            stats.anulados,           "anulado",                 icon.xCircle()) : ""}
-      ${stats.autorizados      > 0 ? statCard("Autorizados",         stats.autorizados,        "autorizado",              icon.clock3())  : ""}
+      ${eventoStatsBarContent(stats)}
     </div>
 
     ${batchActionsBar()}
@@ -883,14 +941,23 @@ function exportDropdown(inscritos, stats) {
     </details>`;
 }
 
-function statCard(label, value, variant = "", iconHtml = "") {
+// filterValue: quando informado, o card vira um atalho de filtro rápido —
+// clicar aplica/remove state.filters.status ("" representa "sem filtro").
+// undefined (padrão) mantém o card como exibição, sem interação.
+function statCard(label, value, variant = "", iconHtml = "", filterValue = undefined) {
   const cls = variant ? ` stat-card--${variant}` : "";
+  const clickable = filterValue !== undefined;
+  const isActive = clickable && state.filters.status === filterValue;
+  const tag = clickable ? "button" : "div";
+  const attrs = clickable
+    ? ` type="button" data-action="quick-filter-status" data-status-value="${filterValue}"`
+    : "";
   return `
-    <div class="stat-card${cls}">
+    <${tag} class="stat-card${cls}${clickable ? " stat-card--clickable" : ""}${isActive ? " stat-card--active" : ""}"${attrs}>
       <div class="stat-icon">${iconHtml}</div>
       <b class="stat-value">${value}</b>
       <span class="stat-label">${label}</span>
-    </div>`;
+    </${tag}>`;
 }
 
 function th(key, label) {
@@ -917,6 +984,7 @@ function inscritoRow(inscrito) {
       <td>${inscrito.email || "--"}</td>
       <td class="${!ativo ? "td-nome-inativo" : ""}">${inscrito.cliente || "--"}</td>
       <td>${inscrito.variante || "--"}</td>
+      <td>${inscrito.quantidade ?? 1}</td>
       <td>${inscrito.vendedor || "--"}</td>
       <td>
         ${ativo
@@ -951,6 +1019,7 @@ function inscritoCard(inscrito) {
       <div class="mc-top">
         <input type="checkbox" class="row-check mc-check" data-action="toggle-select" data-inscrito-id="${inscrito.id}" ${sel ? "checked" : ""}>
         <span class="mc-pedido">${inscrito.pedido || "--"}</span>
+        <span class="mc-qtd">Qtd: ${inscrito.quantidade ?? 1}</span>
         <span class="mc-valor">${money.format(valorPago(inscrito))}</span>
       </div>
       <div class="mc-body">
@@ -1064,6 +1133,37 @@ function confirmBatchAction(n) {
   return confirm(`Tem certeza que deseja alterar ${n} inscrito${n > 1 ? "s" : ""}?\nEssa ação não poderá ser desfeita facilmente.`);
 }
 
+// Toast leve para falhas de escrita no Firestore (offline, permissão negada, etc.)
+// — sem biblioteca nova, só DOM direto.
+function showToast(message) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = message;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("toast--visible"));
+  setTimeout(() => {
+    el.classList.remove("toast--visible");
+    setTimeout(() => el.remove(), 300);
+  }, 3500);
+}
+
+// Anexa um aviso de erro genérico a qualquer escrita no Firestore, sem alterar
+// o retorno da Promise original (quem chamar ainda pode encadear o próprio .then/.catch).
+function withErrorToast(promise, message = "Não foi possível salvar a alteração. Tente novamente.") {
+  promise.catch(() => showToast(message));
+  return promise;
+}
+
+// Mesma ideia para ações em lote — um único toast agregado, não um por linha,
+// pra não empilhar vários avisos iguais se a conexão cair no meio da ação.
+function withBatchErrorToast(promises) {
+  Promise.allSettled(promises).then((results) => {
+    if (results.some((r) => r.status === "rejected")) {
+      showToast("Algumas alterações não foram salvas. Verifique sua conexão e tente novamente.");
+    }
+  });
+}
+
 function _partialUpdateSelection() {
   const batchBar = root.querySelector("#batch-bar");
   if (batchBar) batchBar.outerHTML = batchActionsBar();
@@ -1117,20 +1217,7 @@ function eventoViewPartialUpdate() {
   const exportDetails  = root.querySelector("#export-details");
   const filtersBtnDot  = root.querySelector(".btn-filters-toggle");
 
-  if (statsBar) statsBar.innerHTML =
-    statCard("Total Pagos",      stats.total,          "",               icon.users()) +
-    statCard("Confirmados",      stats.confirmados,    "confirmado",     icon.checkCircle()) +
-    statCard("Não Confirmados",  stats.naoConfirmados, "nao-confirmado", icon.clock3()) +
-    statCard("Presentes",        stats.presentes,      "presente",       icon.mapPin()) +
-    statCard("Ausentes",         stats.ausentes,       "ausente",        icon.userX()) +
-    statCard("Desistentes",      stats.desistentes,    "desistente",     icon.userMinus()) +
-    statCard("Cancelados",       stats.cancelados,     "cancelado",      icon.xCircle()) +
-    statCard("Reembolsados",     stats.reembolsados,   "reembolsado",    icon.wallet()) +
-    (stats.parcReembolsados > 0 ? statCard("Parc. Reembolsados", stats.parcReembolsados, "parcialmente-reembolsado", icon.wallet()) : "") +
-    (stats.expirados        > 0 ? statCard("Expirados",           stats.expirados,         "expirado",                icon.clock3())  : "") +
-    (stats.pendentes        > 0 ? statCard("Pendentes",           stats.pendentes,          "pendente",                icon.clock3())  : "") +
-    (stats.anulados         > 0 ? statCard("Anulados",            stats.anulados,           "anulado",                 icon.xCircle()) : "") +
-    (stats.autorizados      > 0 ? statCard("Autorizados",         stats.autorizados,        "autorizado",              icon.clock3())  : "");
+  if (statsBar) statsBar.innerHTML = eventoStatsBarContent(stats);
 
   if (batchBar) batchBar.outerHTML = batchActionsBar();
 
@@ -1156,10 +1243,10 @@ function eventoViewPartialUpdate() {
   _updateFilterSelectOptions('[data-filter="variante"]', "Todas as variantes", variantes, state.filters.variante);
 
   if (tbody) tbody.innerHTML = !state.inscritosLoaded
-    ? `<tr><td colspan="13" class="empty-row">Carregando inscritos...</td></tr>`
+    ? `<tr><td colspan="14" class="empty-row">Carregando inscritos...</td></tr>`
     : (paginated.length
         ? paginated.map(inscritoRow).join("")
-        : `<tr><td colspan="13" class="empty-row">Nenhum inscrito encontrado.</td></tr>`);
+        : `<tr><td colspan="14" class="empty-row">Nenhum inscrito encontrado.</td></tr>`);
 
   if (mobileCards) mobileCards.innerHTML = !state.inscritosLoaded
     ? `<p class="empty-row">Carregando inscritos...</p>`
@@ -1189,6 +1276,7 @@ function cursoEventosPartialUpdate() {
     statCard("Eventos encerrados", pastCount);
 
   if (eventosGrid) eventosGrid.innerHTML = eventoGridContent(sections);
+  hydrateConfirmados(visibleEventosParaConfirmados(sections));
 
   if (toggleBtn) {
     toggleBtn.className = `btn-toggle-past${state.showPastEventos ? " active" : ""}`;
@@ -1238,11 +1326,11 @@ function handleClick(e) {
 
     // ── Status do curso (arquivamento/ocultação) ───────────────────────────────
     } else if (action === "curso-ocultar") {
-      updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.HIDDEN });
+      withErrorToast(updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.HIDDEN }));
     } else if (action === "curso-encerrar") {
-      updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.FINISHED });
+      withErrorToast(updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.FINISHED }));
     } else if (action === "curso-reativar") {
-      updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.ACTIVE });
+      withErrorToast(updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.ACTIVE }));
     } else if (action === "toggle-curso-sort-dir") {
       state.cursoSortDir = state.cursoSortDir === "asc" ? "desc" : "asc";
       saveNav();
@@ -1250,17 +1338,27 @@ function handleClick(e) {
       if (filtrosRow) filtrosRow.innerHTML = cursosFiltrosRow();
       const grid = root.querySelector("#course-grid");
       if (grid) grid.innerHTML = courseGridContent();
+    } else if (action === "quick-filter-status") {
+      // Pill de atalho nos stat-cards — clicar de novo no mesmo remove o filtro.
+      const value = el.dataset.statusValue;
+      state.filters.status = state.filters.status === value ? "" : value;
+      state.page = 1;
+      saveNav();
+      eventoViewPartialUpdate();
+      // Mantém o <select> de status da barra de filtros em sincronia com a pill.
+      const statusSelect = root.querySelector('[data-filter="status"]');
+      if (statusSelect) statusSelect.value = state.filters.status;
 
     } else if (action === "toggle-impresso") {
       const id = el.dataset.inscritoId;
       const inscrito = state.inscritos.find(i => i.id === id);
       if (inscrito) {
         const novoImpresso = !inscrito.impresso;
-        updateInscrito(state.curso.id, state.evento.id, id, {
+        withErrorToast(updateInscrito(state.curso.id, state.evento.id, id, {
           impresso: novoImpresso,
           impressoEm: novoImpresso ? new Date() : null,
           impressoPor: "",
-        });
+        }));
       }
     } else if (action === "export-excel") {
       exportExcel();
@@ -1298,29 +1396,33 @@ function handleClick(e) {
     // ── Ações em lote ─────────────────────────────────────────────────────────
     } else if (action === "batch-impresso") {
       if (!confirmBatchAction(state.selectedIds.size)) return;
-      for (const id of state.selectedIds) {
-        updateInscrito(state.curso.id, state.evento.id, id, { impresso: true, impressoEm: new Date(), impressoPor: "" });
-      }
+      withBatchErrorToast([...state.selectedIds].map(id =>
+        updateInscrito(state.curso.id, state.evento.id, id, { impresso: true, impressoEm: new Date(), impressoPor: "" })
+      ));
     } else if (action === "batch-confirmado") {
       if (!confirmBatchAction(state.selectedIds.size)) return;
-      for (const id of state.selectedIds) {
-        updateInscrito(state.curso.id, state.evento.id, id, { status: "Confirmado" });
-      }
+      withBatchErrorToast([...state.selectedIds].map(id =>
+        updateInscrito(state.curso.id, state.evento.id, id, { status: "Confirmado" })
+      ));
+      _confirmadosCache.delete(state.evento.id);
       state.selectedIds = new Set();
       _partialUpdateSelection();
     } else if (action === "batch-presente") {
       if (!confirmBatchAction(state.selectedIds.size)) return;
-      for (const id of state.selectedIds) {
-        updateInscrito(state.curso.id, state.evento.id, id, { status: "Presente" });
-      }
+      withBatchErrorToast([...state.selectedIds].map(id =>
+        updateInscrito(state.curso.id, state.evento.id, id, { status: "Presente" })
+      ));
+      _confirmadosCache.delete(state.evento.id);
       state.selectedIds = new Set();
       _partialUpdateSelection();
 
     // ── Ações rápidas mobile ──────────────────────────────────────────────────
     } else if (action === "quick-confirmado") {
-      updateInscrito(state.curso.id, state.evento.id, el.dataset.inscritoId, { status: "Confirmado" });
+      withErrorToast(updateInscrito(state.curso.id, state.evento.id, el.dataset.inscritoId, { status: "Confirmado" }));
+      _confirmadosCache.delete(state.evento.id);
     } else if (action === "quick-presente") {
-      updateInscrito(state.curso.id, state.evento.id, el.dataset.inscritoId, { status: "Presente" });
+      withErrorToast(updateInscrito(state.curso.id, state.evento.id, el.dataset.inscritoId, { status: "Presente" }));
+      _confirmadosCache.delete(state.evento.id);
 
     // ── Mobile: filtros toggle ────────────────────────────────────────────────
     } else if (action === "toggle-filters-mobile") {
@@ -1354,7 +1456,9 @@ const _debouncedCursoSearch = debounce(() => {
 
 const _debouncedEventoSearch = debounce(() => {
   const grid = root.querySelector("#eventos-content");
-  if (grid) grid.innerHTML = eventoGridContent(computeEventoSections());
+  const sections = computeEventoSections();
+  if (grid) grid.innerHTML = eventoGridContent(sections);
+  hydrateConfirmados(visibleEventosParaConfirmados(sections));
   saveNav();
 }, 200);
 
@@ -1386,7 +1490,7 @@ function handleInput(e) {
     const id = e.target.dataset.inscritoId;
     clearTimeout(e.target._debounce);
     e.target._debounce = setTimeout(() => {
-      updateInscrito(state.curso.id, state.evento.id, id, { observacao: e.target.value });
+      withErrorToast(updateInscrito(state.curso.id, state.evento.id, id, { observacao: e.target.value }));
     }, 800);
   }
 }
@@ -1416,9 +1520,18 @@ function handleChange(e) {
   }
   if (e.target.dataset.action === "change-status") {
     const id = e.target.dataset.inscritoId;
+    const previousStatus = state.inscritos.find((i) => i.id === id)?.status ?? "";
+    const previousClassName = e.target.className;
+    const novoStatus = e.target.value;
     // feedback visual imediato sem esperar o round-trip do Firestore
-    e.target.className = `status-select status-${statusClass(e.target.value)}`;
-    updateInscrito(state.curso.id, state.evento.id, id, { status: e.target.value });
+    e.target.className = `status-select status-${statusClass(novoStatus)}`;
+    _confirmadosCache.delete(state.evento.id);
+    updateInscrito(state.curso.id, state.evento.id, id, { status: novoStatus }).catch(() => {
+      // reverte o feedback otimista se a escrita falhar de verdade
+      e.target.className = previousClassName;
+      e.target.value = previousStatus;
+      showToast("Não foi possível salvar o status. Tente novamente.");
+    });
   }
 }
 
