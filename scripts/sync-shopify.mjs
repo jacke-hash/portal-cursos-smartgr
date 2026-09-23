@@ -479,6 +479,10 @@ async function sync() {
     const orderFinancialStatus = order.financial_status || 'paid';
     const vendedor =
       order.note_attributes?.find(a => a.name === 'Affiliate')?.value || '';
+    const formacao = order.note_attributes?.find(({ name }) =>
+      ['formacao', 'formação', 'profissao', 'profissão', 'area de atuacao', 'área de atuação', 'ocupacao', 'ocupação']
+        .includes(String(name || '').trim().toLowerCase())
+    )?.value || '';
 
     for (const item of order.line_items) {
       const productId = Number(item.product_id);
@@ -522,7 +526,9 @@ async function sync() {
       }
 
       // ── Cálculo financeiro real ─────────────────────────────────────────────
-      const quantidade    = item.quantity || 1;
+      // current_quantity reflete a quantidade após edições/reembolsos do pedido;
+      // quantity é sempre a quantidade original e nunca muda.
+      const quantidade    = item.current_quantity ?? item.quantity ?? 1;
       const precoCatalogo = parseFloat(item.price) || 0;
       const subtotal      = precoCatalogo * quantidade;
       const current_total_discounts = order.current_total_discounts;
@@ -540,7 +546,7 @@ async function sync() {
         const orderDiscount = parseFloat(current_total_discounts) || 0;
         if (orderDiscount > 0) {
           const orderSubtotal = (order.line_items || []).reduce(
-            (s, li) => s + (parseFloat(li.price) || 0) * (li.quantity || 1), 0
+            (s, li) => s + (parseFloat(li.price) || 0) * (li.current_quantity ?? li.quantity ?? 1), 0
           );
           const share = orderSubtotal > 0 ? subtotal / orderSubtotal : 1;
           descontoAplicado = Math.min(orderDiscount * share, subtotal);
@@ -612,6 +618,7 @@ async function sync() {
             empresa,
             cpf,
             vendedor,
+            formacao,
             variante: variantTitle,
             financialStatus: orderFinancialStatus,
             updatedAt: now,
@@ -640,6 +647,7 @@ async function sync() {
             empresa,
             cpf,
             vendedor,
+            formacao,
             variante: variantTitle,
             financialStatus: orderFinancialStatus,
             status: isAtivo ? 'Não Confirmado' : (statusLabel || 'Pendente'),

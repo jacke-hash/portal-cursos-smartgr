@@ -736,6 +736,61 @@ function inscritosStats() {
   };
 }
 
+// Painel executivo: conta ingressos (quantidade) e não apenas pedidos.
+function eventoInsights() {
+  const ativos = state.inscritos.filter(isInscritoAtivo);
+  const quantidade = (i) => Math.max(1, Number(i.quantidade) || 1);
+  const agrupar = (campo, vazio) => {
+    const grupos = new Map();
+    ativos.forEach((i) => {
+      const nome = String(i[campo] || vazio).trim() || vazio;
+      grupos.set(nome, (grupos.get(nome) || 0) + quantidade(i));
+    });
+    return [...grupos.entries()]
+      .map(([nome, total]) => ({ nome, total }))
+      .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR"));
+  };
+  const formacoes = agrupar("formacao", "Não informada");
+  const vendedores = agrupar("vendedor", "Venda direta");
+  return {
+    ingressos: ativos.reduce((total, i) => total + quantidade(i), 0),
+    formacoes,
+    vendedorLider: vendedores[0] || { nome: "Sem vendas", total: 0 },
+  };
+}
+
+function eventoDashboardContent(stats) {
+  const insights = eventoInsights();
+  const maxFormacao = insights.formacoes[0]?.total || 1;
+  const formacoes = insights.formacoes.slice(0, 5);
+  const outrasFormacoes = Math.max(0, insights.formacoes.length - formacoes.length);
+  const taxaConfirmacao = insights.ingressos ? Math.round((stats.confirmados / insights.ingressos) * 100) : 0;
+  return `
+    <section class="event-dashboard" aria-label="Resumo do evento">
+      <article class="event-kpi event-kpi--sales">
+        <span class="event-kpi-label">Ingressos vendidos</span>
+        <strong class="event-kpi-value">${insights.ingressos}</strong>
+        <span class="event-kpi-note">${stats.confirmados} confirmado${stats.confirmados !== 1 ? "s" : ""} · ${taxaConfirmacao}% da base</span>
+      </article>
+      <article class="event-audience">
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Público por formação</span><strong>${insights.formacoes.length} perfil${insights.formacoes.length !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        <div class="formation-list">${formacoes.map((item) => `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / maxFormacao) * 100))}%"></i></div><b>${item.total}</b></div>`).join("") || `<span class="event-empty-data">Aguardando dados da Shopify</span>`}</div>
+        ${outrasFormacoes ? `<span class="event-more-data">+ ${outrasFormacoes} outras formações</span>` : ""}
+      </article>
+      <article class="event-kpi event-kpi--leader">
+        <span class="event-kpi-label">Quem mais vendeu</span>
+        <div class="leader-person"><span class="leader-mark">#1</span><strong title="${insights.vendedorLider.nome}">${insights.vendedorLider.nome}</strong></div>
+        <span class="event-kpi-note">${insights.vendedorLider.total} ingresso${insights.vendedorLider.total !== 1 ? "s" : ""} vendido${insights.vendedorLider.total !== 1 ? "s" : ""}</span>
+      </article>
+      <div class="event-operational-line" aria-label="Operação do evento">
+        <span><i class="status-dot status-dot--ok"></i>${stats.confirmados} confirmados</span>
+        <span><i class="status-dot status-dot--wait"></i>${stats.naoConfirmados} aguardando confirmação</span>
+        <span><i class="status-dot status-dot--info"></i>${stats.presentes} presentes</span>
+        ${stats.totalInativos ? `<span><i class="status-dot status-dot--muted"></i>${stats.totalInativos} inativo${stats.totalInativos !== 1 ? "s" : ""}</span>` : ""}
+      </div>
+    </section>`;
+}
+
 function _filtersBar(vendedores, variantes) {
   return `
     <div class="filters-bar">
@@ -855,8 +910,8 @@ function eventoView() {
       </div>
     </section>
 
-    <div class="stats-bar" id="stats-bar">
-      ${eventoStatsBarContent(stats)}
+    <div id="event-dashboard">
+      ${eventoDashboardContent(stats)}
     </div>
 
     ${batchActionsBar()}
@@ -1207,7 +1262,7 @@ function eventoViewPartialUpdate() {
   const vendedores   = [...new Set(state.inscritos.map(i => i.vendedor).filter(Boolean))];
   const variantes    = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
 
-  const statsBar       = root.querySelector("#stats-bar");
+  const eventDashboard = root.querySelector("#event-dashboard");
   const resultsCount   = root.querySelector("#results-count");
   const tbody          = root.querySelector("#inscritos-tbody");
   const paginationWrap = root.querySelector("#pagination-wrap");
@@ -1217,7 +1272,7 @@ function eventoViewPartialUpdate() {
   const exportDetails  = root.querySelector("#export-details");
   const filtersBtnDot  = root.querySelector(".btn-filters-toggle");
 
-  if (statsBar) statsBar.innerHTML = eventoStatsBarContent(stats);
+  if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(stats);
 
   if (batchBar) batchBar.outerHTML = batchActionsBar();
 

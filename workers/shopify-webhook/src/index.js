@@ -250,7 +250,10 @@ function parseVariantTitle(title) {
 }
 
 function calcFinancials(item, order) {
-  const quantidade    = item.quantity || 1;
+  // current_quantity reflete a quantidade após edições/reembolsos do pedido;
+  // quantity é sempre a quantidade original e nunca muda (ex.: pedido editado
+  // de 7 para 1 continua com quantity=7, current_quantity=1).
+  const quantidade    = item.current_quantity ?? item.quantity ?? 1;
   const precoCatalogo = parseFloat(item.price) || 0;
   const subtotal      = precoCatalogo * quantidade;
 
@@ -263,7 +266,7 @@ function calcFinancials(item, order) {
     const orderDiscount = parseFloat(order.current_total_discounts) || 0;
     if (orderDiscount > 0) {
       const orderSubtotal = (order.line_items || []).reduce(
-        (s, li) => s + (parseFloat(li.price) || 0) * (li.quantity || 1), 0
+        (s, li) => s + (parseFloat(li.price) || 0) * (li.current_quantity ?? li.quantity ?? 1), 0
       );
       const share = orderSubtotal > 0 ? subtotal / orderSubtotal : 1;
       descontoAplicado = Math.min(orderDiscount * share, subtotal);
@@ -292,6 +295,11 @@ async function getCustomerCpf(customerId, accessToken) {
 }
 
 function extractCustomer(order) {
+  const attributes = order.note_attributes || [];
+  const formationAttribute = attributes.find(({ name }) =>
+    ['formacao', 'formação', 'profissao', 'profissão', 'area de atuacao', 'área de atuação', 'ocupacao', 'ocupação']
+      .includes(String(name || '').trim().toLowerCase())
+  );
   return {
     cliente: [
       order.billing_address?.first_name || order.customer?.first_name || '',
@@ -302,7 +310,8 @@ function extractCustomer(order) {
     cidade:   order.billing_address?.city     || order.shipping_address?.city     || '',
     estado:   order.billing_address?.province || order.shipping_address?.province || '',
     empresa:  order.billing_address?.company  || order.customer?.default_address?.company || '',
-    vendedor: order.note_attributes?.find(a => a.name === 'Affiliate')?.value || '',
+    vendedor: attributes.find(a => a.name === 'Affiliate')?.value || '',
+    formacao: formationAttribute?.value || '',
   };
 }
 
