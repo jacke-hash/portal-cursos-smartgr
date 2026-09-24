@@ -1,12 +1,19 @@
-// Backfill do campo `capacidadeDisponivel` (estoque restante na Shopify) nos
-// eventos já existentes. Só busca variantes (leve, ~16 produtos) — não
-// pagina pedidos, diferente de sync-shopify.mjs.
-// Uso: node scripts/backfill-capacidade.mjs
+// Sincroniza `capacidadeDisponivel` (estoque "disponível" na Shopify, mesmo
+// número mostrado em Produtos → Estoque) nos eventos já existentes. Só busca
+// variantes (leve, ~16 produtos) — não pagina pedidos como sync-shopify.mjs.
+//
+// Existe como job recorrente (ver .github/workflows/sync-capacidade.yml) e
+// não só reativo a pedido: "disponível" muda por fulfillment, ajuste manual
+// de estoque etc. — coisas que não disparam o webhook de pedidos, então só
+// atualizar via webhook deixava o número parado (ex.: 101 salvo, Shopify já
+// em 50 por causa de pedidos marcados como "comprometido"/fulfillment).
+//
+// Uso: node scripts/sync-capacidade.mjs
 
 import 'dotenv/config';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { join, dirname } from 'path';
+import { resolve, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 
@@ -17,8 +24,17 @@ const SHOPIFY_STORE = 'smart-gr-pro.myshopify.com';
 const SHOPIFY_API_VERSION = '2024-01';
 const SHOPIFY_BASE = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}`;
 
-const sa = JSON.parse(readFileSync(join(__dirname, '..', 'service-account.json'), 'utf8'));
-initializeApp({ credential: cert(sa) });
+// Mesmo padrão de credenciais do sync-google-sheets.mjs/reconciliacao-pedidos.mjs:
+// JSON inteiro via env em CI, arquivo local no dia a dia.
+function lerServiceAccount() {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  }
+  const localPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || resolve(__dirname, '..', 'service-account.json');
+  return JSON.parse(readFileSync(localPath, 'utf8'));
+}
+
+initializeApp({ credential: cert(lerServiceAccount()) });
 const db = getFirestore();
 
 const KNOWN_COURSES = new Map([
@@ -59,6 +75,10 @@ async function main() {
       const snap = await eventoRef.get();
       if (!snap.exists) { semEvento++; continue; }
       if (typeof variant.inventory_quantity !== 'number') { semNumero++; continue; }
+
+      // Só escreve quando muda — job roda a cada poucos minutos, não faz
+      // sentido bater Firestore (e disparar o listener em tela) à toa.
+      if (snap.data().capacidadeDisponivel === variant.inventory_quantity) continue;
 
       await eventoRef.set({ capacidadeDisponivel: variant.inventory_quantity, updatedAt: Timestamp.now() }, { merge: true });
       console.log(`  ✓ ${variant.title}: capacidadeDisponivel = ${variant.inventory_quantity}`);

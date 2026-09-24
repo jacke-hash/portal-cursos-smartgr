@@ -1,0 +1,33 @@
+name: Sync Capacidade (estoque Shopify → Firestore)
+
+on:
+  schedule:
+    # Roda a cada 5 minutos — "disponível" muda por fulfillment/ajuste manual
+    # de estoque na Shopify, não só por pedido novo (que já é tratado em
+    # tempo real pelo worker de webhook).
+    - cron: '*/5 * * * *'
+  # Permite rodar manualmente pelo GitHub
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Executar sincronização
+        run: node scripts/sync-capacidade.mjs
+        env:
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
