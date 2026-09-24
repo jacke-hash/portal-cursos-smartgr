@@ -72,6 +72,22 @@ export function listenEncerrados(cursoId, callback) {
   );
 }
 
+// Listener do doc do próprio evento (capacidadeDisponivel, totalInscritos,
+// confirmados etc.) — sem isso, esses campos só atualizavam ao reabrir a
+// página, diferente do resto do dashboard que acompanha o Firestore ao vivo.
+export function listenEvento(cursoId, eventoId, callback) {
+  const ref = doc(db, "cursos", cursoId, "eventos", eventoId);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      callback(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+    },
+    (error) => {
+      console.error("[Firestore] Erro em listenEvento:", error.code, error.message);
+    }
+  );
+}
+
 export function listenInscritos(cursoId, eventoId, callback) {
   const ref = collection(db, "cursos", cursoId, "eventos", eventoId, "inscritos");
   return onSnapshot(

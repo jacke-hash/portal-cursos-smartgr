@@ -2,6 +2,7 @@ import {
   getInscritosConfirmados,
   listenCursos,
   listenEncerrados,
+  listenEvento,
   listenEventos,
   listenInscritos,
   updateCurso,
@@ -234,6 +235,7 @@ let unsubCursos    = null;
 let unsubEventos   = null;
 let unsubEncerrados = null;
 let unsubInscritos = null;
+let unsubEvento    = null;
 let pendingRestore = null; // [alteração 2] aguarda dados do Firestore para restaurar
 let root;
 
@@ -374,6 +376,13 @@ function _restoreOpenEvento(evento, scrollY) {
   state.inscritos = [];
   // [fix] reseta a flag de loading — a tabela mostra "carregando" até o próximo snapshot
   state.inscritosLoaded = false;
+
+  if (unsubEvento) unsubEvento();
+  unsubEvento = listenEvento(state.curso.id, evento.id, (ev) => {
+    if (!ev || state.route !== "evento") return;
+    state.evento = ev;
+    refreshEventStatsPanels();
+  });
 
   if (unsubInscritos) unsubInscritos();
   unsubInscritos = listenInscritos(state.curso.id, evento.id, (inscritos) => {
@@ -909,7 +918,6 @@ function _salesDonut(pctVendido) {
 function eventoDashboardContent(stats) {
   const insights = eventoInsights();
   const { profissional, estudante, consumidor, semPerfil } = insights.publico;
-  const taxaConfirmacao = insights.ingressos ? Math.round((stats.confirmados / insights.ingressos) * 100) : 0;
   const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
   const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
 
@@ -932,7 +940,6 @@ function eventoDashboardContent(stats) {
           ${temCapacidade ? _salesDonut(pctVendido) : ""}
         </div>
         ${temCapacidade ? `<span class="sales-remaining${restante <= 10 ? " sales-remaining--low" : ""}">${restante} vaga${restante !== 1 ? "s" : ""} restante${restante !== 1 ? "s" : ""}</span>` : ""}
-        <span class="event-kpi-note">${stats.confirmados} confirmado${stats.confirmados !== 1 ? "s" : ""} · ${taxaConfirmacao}% da base</span>
       </article>
       <article class="event-audience">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
@@ -1820,6 +1827,7 @@ function goToCursos() {
   if (unsubEventos)    { unsubEventos();    unsubEventos    = null; }
   if (unsubEncerrados) { unsubEncerrados(); unsubEncerrados = null; }
   if (unsubInscritos)  { unsubInscritos();  unsubInscritos  = null; }
+  if (unsubEvento)     { unsubEvento();     unsubEvento     = null; }
   state.route = "cursos";
   state.curso = null;
   state.evento = null;
@@ -1882,6 +1890,7 @@ function openCurso(cursoId) {
 
 function goToCurso() {
   if (unsubInscritos) { unsubInscritos(); unsubInscritos = null; }
+  if (unsubEvento)    { unsubEvento();    unsubEvento    = null; }
   state.route = "curso";
   state.evento = null;
   state.inscritos = [];
@@ -1914,6 +1923,14 @@ function openEvento(eventoId) {
     cidade:       { chart: "bar", expanded: false },
   };
   saveNav();
+
+  if (unsubEvento) unsubEvento();
+  unsubEvento = listenEvento(state.curso.id, eventoId, (ev) => {
+    if (!ev || state.route !== "evento") return;
+    state.evento = ev;
+    refreshEventStatsPanels();
+  });
+
   if (unsubInscritos) unsubInscritos();
   // [alteração 4] snapshot → partial update; scroll preservado
   unsubInscritos = listenInscritos(state.curso.id, eventoId, (inscritos) => {
