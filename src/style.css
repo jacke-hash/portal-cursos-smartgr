@@ -915,6 +915,11 @@ h2 {
    link (Safari "data detectors" injeta <a> mesmo sem a gente escrever um),
    neutraliza a cor/sublinhado em vez de deixar o azul nativo aparecer. */
 .data-table td a { color: inherit; text-decoration: none; }
+/* CPF e Vendedor são texto puro sem wrapper próprio — alguns navegadores/
+   webviews aplicam estilo inline no texto detectado (nome, número), que
+   vence qualquer seletor de classe normal. !important é o único jeito de
+   garantir a cor da marca nesses casos. */
+.cell-plain { color: var(--ink) !important; text-decoration: none !important; }
 
 .data-table tr:last-child td { border-bottom: 0; }
 .data-table tbody tr:nth-child(even) td { background: var(--soft); }

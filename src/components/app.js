@@ -781,6 +781,20 @@ function _humanizeFormacao(raw) {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Nome do cliente vem cru do que a pessoa digitou no checkout ("Eliane maria
+// de Almeida leal pescuma") — só pra exibição, nunca toca o dado salvo
+// (busca/exportação continuam usando o valor original). Preposições comuns
+// ficam minúsculas mesmo no meio do nome, como é o padrão em português.
+const NAME_LOWERCASE_WORDS = new Set(["de", "da", "do", "das", "dos", "e"]);
+function _titleCaseName(name) {
+  if (!name) return name;
+  return name
+    .toLowerCase()
+    .split(" ")
+    .map((word, idx) => (idx > 0 && NAME_LOWERCASE_WORDS.has(word) ? word : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join(" ");
+}
+
 // Painel executivo: conta ingressos (quantidade) e não apenas pedidos.
 function eventoInsights() {
   const ativos = state.inscritos.filter(isInscritoAtivo);
@@ -1254,15 +1268,15 @@ function inscritoRow(inscrito) {
         <div class="cell-secondary">${money.format(valorPago(inscrito))} · ${formatDate(inscrito.dataCompra)}</div>
       </td>
       <td class="${!ativo ? "td-nome-inativo" : ""}">
-        <div class="cell-primary">${inscrito.cliente || "--"}</div>
+        <div class="cell-primary">${_titleCaseName(inscrito.cliente) || "--"}</div>
         <div class="cell-secondary">${[inscrito.email, inscrito.telefone].filter(Boolean).join(" · ") || "--"}</div>
       </td>
-      <td>${inscrito.cpf || "CPF não informado"}</td>
+      <td><span class="cell-plain">${inscrito.cpf || "CPF não informado"}</span></td>
       <td>
         <div class="cell-primary">${inscrito.variante || "--"}</div>
         <div class="cell-secondary">Qtd: ${inscrito.quantidade ?? 1}</div>
       </td>
-      <td>${inscrito.vendedor || "--"}</td>
+      <td><span class="cell-plain">${inscrito.vendedor || "--"}</span></td>
       <td>
         ${ativo
           ? `<select class="status-select status-${cls}" data-action="change-status" data-inscrito-id="${inscrito.id}">
@@ -1300,7 +1314,7 @@ function inscritoCard(inscrito) {
         <span class="mc-valor">${money.format(valorPago(inscrito))}</span>
       </div>
       <div class="mc-body">
-        <strong class="mc-nome${!ativo ? " nome-inativo" : ""}">${inscrito.cliente || "--"}</strong>
+        <strong class="mc-nome${!ativo ? " nome-inativo" : ""}">${_titleCaseName(inscrito.cliente) || "--"}</strong>
         <span class="mc-email">${inscrito.email || ""}</span>
         <div class="mc-meta">
           ${inscrito.telefone ? `<span>📞 ${inscrito.telefone}</span>` : ""}
