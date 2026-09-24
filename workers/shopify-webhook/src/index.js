@@ -361,25 +361,38 @@ async function getVariantInventory(variantId, accessToken) {
   }
 }
 
-async function recalcEvento(db, productId, variantId, varianteTitle, date, env) {
-  const inscritos = await db.list(`cursos/${productId}/eventos/${variantId}/inscritos`);
-  // Agregados do portal contam apenas inscritos pagos — cancelados, reembolsados,
-  // pendentes, etc. seguem registrados no Firestore para auditoria, mas nunca
-  // entram no total principal (ETAPA 5).
-  const ativos      = inscritos.filter(isInscritoAtivo);
-  const total       = ativos.length;
-  const confirmados = ativos.filter(i => i.status === 'Confirmado' || i.status === 'Presente').length;
+// Delta de totalInscritos/confirmados causado por UM inscrito mudando de
+// estado (existing → isActiveAfter/isConfirmadoAfter). Evita reler a
+// subcoleção inteira de inscritos a cada pedido só pra saber esses dois
+// números — num evento com centenas de inscritos, isso multiplicava o
+// consumo de leitura do Firestore por pedido (estourou a cota do plano
+// gratuito numa loja ativa). O chamador já tem `existing` em mãos de
+// qualquer forma (precisa dele pra decidir patch vs set).
+function isConfirmado(i) {
+  return i?.status === 'Confirmado' || i?.status === 'Presente';
+}
+function deltaAgregados(existing, isActiveAfter, isConfirmadoAfter) {
+  const wasActive     = existing ? isInscritoAtivo(existing) : false;
+  const wasConfirmado = existing ? isConfirmado(existing) : false;
+  return {
+    total:       (isActiveAfter ? 1 : 0) - (wasActive ? 1 : 0),
+    confirmados: (isConfirmadoAfter ? 1 : 0) - (wasConfirmado ? 1 : 0),
+  };
+}
 
+async function recalcEvento(db, productId, variantId, varianteTitle, date, env, delta) {
   // Capacidade disponível: vagas restantes reportadas pela Shopify (estoque
   // da variante). Somada ao total de inscritos ativos, dá a capacidade total
   // do evento — não é armazenada separadamente pra nunca ficar dessincronizada.
   const capacidadeDisponivel = await getVariantInventory(variantId, env?.SHOPIFY_ACCESS_TOKEN);
 
   const exists = await db.get(`cursos/${productId}/eventos/${variantId}`);
-  const patch = { totalInscritos: total, confirmados, updatedAt: new Date() };
+  const patch = { updatedAt: new Date() };
   if (capacidadeDisponivel !== null) patch.capacidadeDisponivel = capacidadeDisponivel;
 
   if (exists) {
+    patch.totalInscritos = Math.max(0, (exists.totalInscritos || 0) + delta.total);
+    patch.confirmados    = Math.max(0, (exists.confirmados || 0) + delta.confirmados);
     await db.patch(`cursos/${productId}/eventos/${variantId}`, patch);
   } else {
     await db.set(`cursos/${productId}/eventos/${variantId}`, {
@@ -387,6 +400,8 @@ async function recalcEvento(db, productId, variantId, varianteTitle, date, env) 
       varianteId: variantId,
       data: date || null,
       ativo: true,
+      totalInscritos: Math.max(0, delta.total),
+      confirmados: Math.max(0, delta.confirmados),
       ...patch,
     });
   }
@@ -496,6 +511,12 @@ async function processOrder(db, order, financialStatus, env) {
       updatedAt: now,
     };
 
+    // Confirmado/Presente só é setado por ação manual do operador (fora
+    // deste worker) — aqui o status ou fica igual (patch sem tocar `status`)
+    // ou é sobrescrito pro rótulo de inativo, nunca vira Confirmado/Presente.
+    const isConfirmadoAfter = existing && isActive ? isConfirmado(existing) : false;
+    const delta = deltaAgregados(existing, isActive, isConfirmadoAfter);
+
     if (existing) {
       const updateData = { ...base };
       // Registra quando o financialStatus realmente mudou
@@ -518,15 +539,15 @@ async function processOrder(db, order, financialStatus, env) {
       console.log(`[processOrder] Inscrito criado: ${inscritoId} financialStatus=${financialStatus} cliente="${cust.cliente}"`);
     }
 
-    affected.push({ productId, variantId, varianteTitle: item.variant_title, date: parsed.date });
+    affected.push({ productId, variantId, varianteTitle: item.variant_title, date: parsed.date, delta });
   }
 
   const seen = new Set();
-  for (const { productId, variantId, varianteTitle, date } of affected) {
+  for (const { productId, variantId, varianteTitle, date, delta } of affected) {
     const key = `${productId}:${variantId}`;
     if (!seen.has(key)) {
       seen.add(key);
-      await recalcEvento(db, productId, variantId, varianteTitle, date, env);
+      await recalcEvento(db, productId, variantId, varianteTitle, date, env, delta);
       await recalcCurso(db, productId);
       console.log(`[processOrder] Agregados recalculados: curso=${productId} evento=${variantId}`);
     }
@@ -557,7 +578,9 @@ async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
     if (existing) {
       await db.patch(path, { financialStatus, status: statusLabel, updatedAt: now });
       console.log(`[updateInscritoFinancialStatus] ${inscritoId}: ${financialStatus} → "${statusLabel}"`);
-      await recalcEvento(db, productId, variantId, existing.variante || '', null, env);
+      // fs não-pago aqui sempre → inativo, status sempre um rótulo inativo
+      const delta = deltaAgregados(existing, false, false);
+      await recalcEvento(db, productId, variantId, existing.variante || '', null, env, delta);
       await recalcCurso(db, productId);
     } else {
       console.log(`[updateInscritoFinancialStatus] Inscrito não encontrado: ${inscritoId} — nenhum registro criado`);
@@ -577,7 +600,8 @@ async function handleCancelled(db, order, env) {
     if (existing) {
       await db.patch(path, { status: 'Cancelado', financialStatus: 'cancelled', updatedAt: new Date() });
       console.log(`[webhook] Pedido cancelado: ${order.name}`);
-      await recalcEvento(db, productId, variantId, existing.variante || '', null, env);
+      const delta = deltaAgregados(existing, false, false);
+      await recalcEvento(db, productId, variantId, existing.variante || '', null, env, delta);
       await recalcCurso(db, productId);
     }
   }
