@@ -917,9 +917,6 @@ function _salesDonut(pctVendido) {
 
 function eventoDashboardContent(stats) {
   const insights = eventoInsights();
-  const { profissional, estudante, consumidor, semPerfil } = insights.publico;
-  const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
-  const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
 
   // Capacidade total = vendidos + vagas restantes reportadas pela Shopify.
   // Sem esse dado (evento ainda não sincronizado), volta ao card simples.
@@ -942,11 +939,8 @@ function eventoDashboardContent(stats) {
         ${temCapacidade ? `<span class="sales-remaining${restante <= 10 ? " sales-remaining--low" : ""}">${restante} vaga${restante !== 1 ? "s" : ""} restante${restante !== 1 ? "s" : ""}</span>` : ""}
       </article>
       <article class="event-audience">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos)}
-        ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
-        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
-        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Público</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        ${_statGroup("Por perfil", "publico", insights.publico.overview, null, 4)}
       </article>
       <article class="event-kpi event-kpi--leader">
         <span class="event-kpi-label">Quem mais vendeu</span>
@@ -968,6 +962,9 @@ function eventoDashboardContent(stats) {
 
 function eventoAnalyticsContent() {
   const insights = eventoInsights();
+  const { profissional, estudante, consumidor, semPerfil } = insights.publico;
+  const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
+  const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
   return `
     <section class="event-analytics" aria-label="Analytics do evento">
       <article class="analytics-panel">
@@ -975,8 +972,11 @@ function eventoAnalyticsContent() {
         ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6)}
       </article>
       <article class="analytics-panel">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Público — visão geral</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Por perfil", "publico", insights.publico.overview, null, 4)}
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos)}
+        ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
+        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
+        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
       </article>
       <article class="analytics-panel">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Região</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
