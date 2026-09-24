@@ -42,6 +42,11 @@ function isInscritoAtivo(i) {
 
 const PAGE_SIZE = 25;
 
+// Número de colunas da tabela de inscritos (checkbox + colunas de dado) —
+// usado no colspan das linhas de "carregando"/"vazio". Uma única fonte:
+// esse valor já apareceu duplicado como literal em 2 lugares e divergiu.
+const TABLE_COL_COUNT = 9;
+
 // Única fonte de verdade do "filtro zerado" de inscritos — reusada em todo
 // ponto que reseta state.filters. Antes, esse literal era repetido em 6
 // lugares e 3 deles esqueciam a chave `inativos`, deixando o filtro de
@@ -1038,7 +1043,7 @@ function _filtersBar(vendedores, variantes) {
     </div>`;
 }
 
-function _tableSection(paginated, colSpan = 14) {
+function _tableSection(paginated, colSpan = TABLE_COL_COUNT) {
   const filtered = filteredInscritos();
   const allSelected = filtered.length > 0 && filtered.every(i => state.selectedIds.has(i.id));
   // [fix] enquanto o primeiro snapshot de inscritos não chegou, mostra "carregando"
@@ -1056,15 +1061,10 @@ function _tableSection(paginated, colSpan = 14) {
             <th class="check-col">
               <input type="checkbox" class="select-all-check" data-action="select-all" ${allSelected ? "checked" : ""} title="Selecionar todos">
             </th>
-            ${th("pedido", "Pedido")}
-            ${th("valorFinalPago", "Valor Pago")}
-            ${th("dataCompra", "Data Compra")}
-            ${th("telefone", "Telefone")}
-            ${th("cpf", "CPF")}
-            ${th("email", "Email")}
+            ${th("dataCompra", "Pedido")}
             ${th("cliente", "Cliente")}
-            ${th("variante", "Variante")}
-            ${th("quantidade", "Qtd")}
+            <th>CPF</th>
+            ${th("variante", "Ingresso")}
             ${th("vendedor", "Vendedor")}
             <th>Status</th>
             <th>Observação</th>
@@ -1249,15 +1249,19 @@ function inscritoRow(inscrito) {
       <td class="check-col">
         <input type="checkbox" class="row-check" data-action="toggle-select" data-inscrito-id="${inscrito.id}" ${sel ? "checked" : ""}>
       </td>
-      <td>${inscrito.pedido || "--"}</td>
-      <td>${money.format(valorPago(inscrito))}</td>
-      <td>${formatDate(inscrito.dataCompra)}</td>
-      <td>${inscrito.telefone || "--"}</td>
+      <td>
+        <div class="cell-primary">${inscrito.pedido || "--"}</div>
+        <div class="cell-secondary">${money.format(valorPago(inscrito))} · ${formatDate(inscrito.dataCompra)}</div>
+      </td>
+      <td class="${!ativo ? "td-nome-inativo" : ""}">
+        <div class="cell-primary">${inscrito.cliente || "--"}</div>
+        <div class="cell-secondary">${[inscrito.email, inscrito.telefone].filter(Boolean).join(" · ") || "--"}</div>
+      </td>
       <td>${inscrito.cpf || "CPF não informado"}</td>
-      <td>${inscrito.email || "--"}</td>
-      <td class="${!ativo ? "td-nome-inativo" : ""}">${inscrito.cliente || "--"}</td>
-      <td>${inscrito.variante || "--"}</td>
-      <td>${inscrito.quantidade ?? 1}</td>
+      <td>
+        <div class="cell-primary">${inscrito.variante || "--"}</div>
+        <div class="cell-secondary">Qtd: ${inscrito.quantidade ?? 1}</div>
+      </td>
       <td>${inscrito.vendedor || "--"}</td>
       <td>
         ${ativo
@@ -1530,10 +1534,10 @@ function eventoViewPartialUpdate() {
   _updateFilterSelectOptions('[data-filter="variante"]', "Todas as variantes", variantes, state.filters.variante);
 
   if (tbody) tbody.innerHTML = !state.inscritosLoaded
-    ? `<tr><td colspan="14" class="empty-row">Carregando inscritos...</td></tr>`
+    ? `<tr><td colspan="${TABLE_COL_COUNT}" class="empty-row">Carregando inscritos...</td></tr>`
     : (paginated.length
         ? paginated.map(inscritoRow).join("")
-        : `<tr><td colspan="14" class="empty-row">Nenhum inscrito encontrado.</td></tr>`);
+        : `<tr><td colspan="${TABLE_COL_COUNT}" class="empty-row">Nenhum inscrito encontrado.</td></tr>`);
 
   if (mobileCards) mobileCards.innerHTML = !state.inscritosLoaded
     ? `<p class="empty-row">Carregando inscritos...</p>`
