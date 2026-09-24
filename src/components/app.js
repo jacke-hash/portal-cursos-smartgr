@@ -214,14 +214,15 @@ let state = {
   page: 1,
   selectedIds: new Set(),   // seleção manual de inscritos (bulk actions)
   // Painéis de estatística do evento (público, vendedores, região): modo de
-  // gráfico (bar/donut) e expansão da lista, por grupo.
+  // gráfico (bar/donut) e expansão da lista, por grupo. Começa em "donut"
+  // (pizza) por padrão — usuário pode trocar pra barras pelo ícone.
   statsView: {
-    profissional: { chart: "bar", expanded: false },
-    estudante:    { chart: "bar", expanded: false },
-    publico:      { chart: "bar", expanded: false },
-    vendedores:   { chart: "bar", expanded: false },
-    estado:       { chart: "bar", expanded: false },
-    cidade:       { chart: "bar", expanded: false },
+    profissional: { chart: "donut", expanded: false },
+    estudante:    { chart: "donut", expanded: false },
+    publico:      { chart: "donut", expanded: false },
+    vendedores:   { chart: "donut", expanded: false },
+    estado:       { chart: "donut", expanded: false },
+    cidade:       { chart: "donut", expanded: false },
   },
   // [fix] Flags de "primeiro snapshot recebido" — evitam mostrar "nenhum resultado"
   // antes do Firestore responder (corrida entre render() inicial e onSnapshot assíncrono)
@@ -1915,12 +1916,12 @@ function openEvento(eventoId) {
   state.filters = { ...DEFAULT_INSCRITO_FILTERS };
   state.page = 1;
   state.statsView = {
-    profissional: { chart: "bar", expanded: false },
-    estudante:    { chart: "bar", expanded: false },
-    publico:      { chart: "bar", expanded: false },
-    vendedores:   { chart: "bar", expanded: false },
-    estado:       { chart: "bar", expanded: false },
-    cidade:       { chart: "bar", expanded: false },
+    profissional: { chart: "donut", expanded: false },
+    estudante:    { chart: "donut", expanded: false },
+    publico:      { chart: "donut", expanded: false },
+    vendedores:   { chart: "donut", expanded: false },
+    estado:       { chart: "donut", expanded: false },
+    cidade:       { chart: "donut", expanded: false },
   };
   saveNav();
 
