@@ -526,6 +526,13 @@ h2 {
 .formation-track i { display: block; height: 100%; border-radius: inherit; background: #5c7ca3; }
 .event-more-data { display: block; margin-top: 9px; }
 .event-empty-data { color: var(--muted); font-size: 12px; }
+.audience-group { margin-bottom: 14px; }
+.audience-group:last-child { margin-bottom: 0; }
+.audience-group-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.audience-group-title b { font-size: 12px; color: var(--ink); }
+.audience-group--flat { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--line, #e8eef6); font-size: 12px; font-weight: 700; color: var(--muted); }
+.audience-group--flat b { font-size: 13px; color: var(--ink); }
+.audience-group--muted { opacity: .7; }
 .leader-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .leader-person strong { overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .leader-mark { display: inline-grid; place-items: center; width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; background: #fff3cc; color: #8a5b00; font-size: 12px; font-weight: 800; }

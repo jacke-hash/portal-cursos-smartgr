@@ -71,25 +71,31 @@ async function fetchAllPages(firstUrl) {
   return items;
 }
 
-// Deriva a formação exibida a partir do perfil_cliente informado no checkout:
-// profissional usa a profissão declarada; estudante e consumidor final não têm
-// profissão, então são rotulados explicitamente em vez de ficarem em branco.
-// Pedidos antigos sem perfil_cliente caem no fallback pelos nomes legados.
-function extractFormacao(attributes) {
+// Deriva perfil (profissional/estudante/consumidor) e formação a partir do
+// checkout: profissional usa a profissão declarada, estudante usa a área de
+// estudo declarada — nunca um rótulo fixo. Pedidos antigos sem perfil_cliente
+// caem no fallback pelos nomes legados, sem perfil definido.
+function extractFormacaoInfo(attributes) {
   const norm = (s) => String(s || '').trim().toLowerCase();
-  const perfil = norm(attributes.find((a) => norm(a.name) === 'perfil_cliente')?.value);
+  const valor = (key) => attributes.find((a) => norm(a.name) === key)?.value?.trim() || '';
+  const perfil = norm(valor('perfil_cliente'));
 
   if (perfil === 'profissional') {
-    const profissao = attributes.find((a) => norm(a.name) === 'profissao_cliente')?.value || '';
-    if (profissao) return profissao;
+    return { perfil: 'profissional', formacao: valor('profissao_cliente') };
   }
-  if (perfil === 'estudante') return 'Estudante';
-  if (perfil === 'consumidor' || perfil === 'consumidor_final' || perfil === 'consumidor final') return 'Consumidor Final';
+  if (perfil === 'estudante') {
+    const area = valor('area_estudo_cliente');
+    return { perfil: 'estudante', formacao: area === '-' ? '' : area };
+  }
+  if (perfil === 'consumidor' || perfil === 'consumidor_final' || perfil === 'consumidor final') {
+    return { perfil: 'consumidor', formacao: '' };
+  }
 
-  return attributes.find(({ name }) =>
+  const legado = attributes.find(({ name }) =>
     ['formacao', 'formação', 'profissao', 'profissão', 'profissao_cliente', 'area de atuacao', 'área de atuação', 'ocupacao', 'ocupação']
       .includes(norm(name))
   )?.value || '';
+  return { perfil: '', formacao: legado };
 }
 
 async function main() {
@@ -99,9 +105,9 @@ async function main() {
   const orders = await fetchAllPages(firstUrl);
   console.log(`Total de pedidos no período: ${orders.length}`);
 
-  const formacaoById = new Map();
+  const infoById = new Map();
   for (const order of orders) {
-    formacaoById.set(String(order.id), extractFormacao(order.note_attributes || []));
+    infoById.set(String(order.id), extractFormacaoInfo(order.note_attributes || []));
   }
 
   let totalInscritos = 0, atualizados = 0, semPedidoNoPeriodo = 0, semMudanca = 0;
@@ -113,13 +119,13 @@ async function main() {
       for (const doc of inscritosSnap.docs) {
         totalInscritos++;
         const data = doc.data();
-        if (!formacaoById.has(data.shopifyId)) { semPedidoNoPeriodo++; continue; }
+        if (!infoById.has(data.shopifyId)) { semPedidoNoPeriodo++; continue; }
 
-        const novaFormacao = formacaoById.get(data.shopifyId);
-        if (novaFormacao === (data.formacao || '')) { semMudanca++; continue; }
+        const { perfil: novoPerfil, formacao: novaFormacao } = infoById.get(data.shopifyId);
+        if (novaFormacao === (data.formacao || '') && novoPerfil === (data.perfil || '')) { semMudanca++; continue; }
 
-        await doc.ref.set({ formacao: novaFormacao, updatedAt: Timestamp.now() }, { merge: true });
-        console.log(`  ${productId}/${eventoDoc.id}/${doc.id}: "${data.formacao || ''}" → "${novaFormacao}"`);
+        await doc.ref.set({ formacao: novaFormacao, perfil: novoPerfil, updatedAt: Timestamp.now() }, { merge: true });
+        console.log(`  ${productId}/${eventoDoc.id}/${doc.id}: perfil="${data.perfil || ''}"→"${novoPerfil}" formacao="${data.formacao || ''}"→"${novaFormacao}"`);
         atualizados++;
       }
     }

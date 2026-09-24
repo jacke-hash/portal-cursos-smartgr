@@ -740,9 +740,10 @@ function inscritosStats() {
 function eventoInsights() {
   const ativos = state.inscritos.filter(isInscritoAtivo);
   const quantidade = (i) => Math.max(1, Number(i.quantidade) || 1);
-  const agrupar = (campo, vazio) => {
+  const somaQuantidade = (lista) => lista.reduce((total, i) => total + quantidade(i), 0);
+  const agrupar = (lista, campo, vazio) => {
     const grupos = new Map();
-    ativos.forEach((i) => {
+    lista.forEach((i) => {
       const nome = String(i[campo] || vazio).trim() || vazio;
       grupos.set(nome, (grupos.get(nome) || 0) + quantidade(i));
     });
@@ -750,20 +751,41 @@ function eventoInsights() {
       .map(([nome, total]) => ({ nome, total }))
       .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR"));
   };
-  const formacoes = agrupar("formacao", "Não informada");
-  const vendedores = agrupar("vendedor", "Venda direta");
+
+  // Público separado por perfil: profissional (por profissão) e estudante
+  // (por área de estudo) têm distribuição própria; consumidor final e os
+  // pedidos antigos sem perfil_cliente (legado) são só uma contagem.
+  const profissionais = ativos.filter((i) => i.perfil === "profissional");
+  const estudantes    = ativos.filter((i) => i.perfil === "estudante");
+  const consumidores  = ativos.filter((i) => i.perfil === "consumidor");
+  const semPerfil     = ativos.filter((i) => !["profissional", "estudante", "consumidor"].includes(i.perfil));
+
+  const vendedores = agrupar(ativos, "vendedor", "Venda direta");
+
   return {
-    ingressos: ativos.reduce((total, i) => total + quantidade(i), 0),
-    formacoes,
+    ingressos: somaQuantidade(ativos),
+    publico: {
+      profissional: { total: somaQuantidade(profissionais), formacoes: agrupar(profissionais, "formacao", "Não informada") },
+      estudante:    { total: somaQuantidade(estudantes), formacoes: agrupar(estudantes, "formacao", "Não informada") },
+      consumidor:   { total: somaQuantidade(consumidores) },
+      semPerfil:    { total: somaQuantidade(semPerfil) },
+    },
     vendedorLider: vendedores[0] || { nome: "Sem vendas", total: 0 },
   };
 }
 
+function _formationList(grupo, limite = 4) {
+  const max = grupo[0]?.total || 1;
+  const topo = grupo.slice(0, limite);
+  const outras = Math.max(0, grupo.length - topo.length);
+  return `
+    <div class="formation-list">${topo.map((item) => `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${item.total}</b></div>`).join("") || `<span class="event-empty-data">Sem dados</span>`}</div>
+    ${outras ? `<span class="event-more-data">+ ${outras} outras</span>` : ""}`;
+}
+
 function eventoDashboardContent(stats) {
   const insights = eventoInsights();
-  const maxFormacao = insights.formacoes[0]?.total || 1;
-  const formacoes = insights.formacoes.slice(0, 5);
-  const outrasFormacoes = Math.max(0, insights.formacoes.length - formacoes.length);
+  const { profissional, estudante, consumidor, semPerfil } = insights.publico;
   const taxaConfirmacao = insights.ingressos ? Math.round((stats.confirmados / insights.ingressos) * 100) : 0;
   return `
     <section class="event-dashboard" aria-label="Resumo do evento">
@@ -773,9 +795,17 @@ function eventoDashboardContent(stats) {
         <span class="event-kpi-note">${stats.confirmados} confirmado${stats.confirmados !== 1 ? "s" : ""} · ${taxaConfirmacao}% da base</span>
       </article>
       <article class="event-audience">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Público por formação</span><strong>${insights.formacoes.length} perfil${insights.formacoes.length !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        <div class="formation-list">${formacoes.map((item) => `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / maxFormacao) * 100))}%"></i></div><b>${item.total}</b></div>`).join("") || `<span class="event-empty-data">Aguardando dados da Shopify</span>`}</div>
-        ${outrasFormacoes ? `<span class="event-more-data">+ ${outrasFormacoes} outras formações</span>` : ""}
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        <div class="audience-group">
+          <div class="audience-group-title"><span>Profissionais</span><b>${profissional.total}</b></div>
+          ${_formationList(profissional.formacoes)}
+        </div>
+        <div class="audience-group">
+          <div class="audience-group-title"><span>Estudantes</span><b>${estudante.total}</b></div>
+          ${_formationList(estudante.formacoes)}
+        </div>
+        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${consumidor.total}</b></div>
+        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${semPerfil.total}</b></div>` : ""}
       </article>
       <article class="event-kpi event-kpi--leader">
         <span class="event-kpi-label">Quem mais vendeu</span>
