@@ -746,6 +746,26 @@ function inscritosStats() {
   };
 }
 
+// Profissão/área de estudo vêm da Shopify como slug cru (ex.: "biomedico",
+// "estetica_cosmetica") — mapeia pros nomes conhecidos com acento e
+// maiúscula certos; valor desconhecido cai num title-case genérico.
+const FORMACAO_LABELS = {
+  biomedico: "Biomédico", esteticista: "Esteticista", enfermeiro: "Enfermeiro",
+  dentista: "Dentista", medico: "Médico", farmaceutico: "Farmacêutico",
+  fisioterapeuta: "Fisioterapeuta", massoterapeuta: "Massoterapeuta",
+  tricologista: "Tricologista", nutricionista: "Nutricionista",
+  biomedicina: "Biomedicina", estetica_cosmetica: "Estética e Cosmética",
+  odontologia: "Odontologia", farmacia: "Farmácia", enfermagem: "Enfermagem",
+  fisioterapia: "Fisioterapia", medicina: "Medicina", nutricao: "Nutrição",
+  outras: "Outras", outros: "Outros",
+};
+function _humanizeFormacao(raw) {
+  const key = String(raw || "").trim().toLowerCase();
+  if (FORMACAO_LABELS[key]) return FORMACAO_LABELS[key];
+  if (!key) return raw;
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 // Painel executivo: conta ingressos (quantidade) e não apenas pedidos.
 function eventoInsights() {
   const ativos = state.inscritos.filter(isInscritoAtivo);
@@ -761,6 +781,8 @@ function eventoInsights() {
       .map(([nome, total]) => ({ nome, total }))
       .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR"));
   };
+  const agruparFormacao = (lista, vazio) =>
+    agrupar(lista, "formacao", vazio).map((g) => (g.nome === vazio ? g : { ...g, nome: _humanizeFormacao(g.nome) }));
 
   // Público separado por perfil: profissional (por profissão) e estudante
   // (por área de estudo) têm distribuição própria; consumidor final e os
@@ -790,14 +812,13 @@ function eventoInsights() {
   return {
     ingressos: somaQuantidade(ativos),
     publico: {
-      profissional: { total: publicoTotais.profissional, formacoes: agrupar(profissionais, "formacao", "Não informada") },
-      estudante:    { total: publicoTotais.estudante, formacoes: agrupar(estudantes, "formacao", "Não informada") },
+      profissional: { total: publicoTotais.profissional, formacoes: agruparFormacao(profissionais, "Não informada") },
+      estudante:    { total: publicoTotais.estudante, formacoes: agruparFormacao(estudantes, "Não informada") },
       consumidor:   { total: publicoTotais.consumidor },
       semPerfil:    { total: publicoTotais.semPerfil },
       overview:     publicoOverview,
     },
     vendedores,
-    vendedorLider: vendedores[0] || { nome: "Sem vendas", total: 0 },
     regiao: { estados, cidades },
   };
 }
@@ -896,8 +917,12 @@ function eventoDashboardContent(stats) {
       </article>
       <article class="event-kpi event-kpi--leader">
         <span class="event-kpi-label">Quem mais vendeu</span>
-        <div class="leader-person"><span class="leader-mark">#1</span><strong title="${insights.vendedorLider.nome}">${insights.vendedorLider.nome}</strong></div>
-        <span class="event-kpi-note">${insights.vendedorLider.total} ingresso${insights.vendedorLider.total !== 1 ? "s" : ""} vendido${insights.vendedorLider.total !== 1 ? "s" : ""}</span>
+        <div class="leader-list">
+          ${insights.vendedores.slice(0, 3).map((v, idx) => {
+            const pct = insights.ingressos ? Math.round((v.total / insights.ingressos) * 100) : 0;
+            return `<div class="leader-row"><span class="leader-mark">#${idx + 1}</span><span class="leader-name" title="${v.nome}">${v.nome}</span><b>${v.total} ${_pctChip(pct)}</b></div>`;
+          }).join("") || `<span class="event-empty-data">Sem vendas</span>`}
+        </div>
       </article>
       <div class="event-operational-line" aria-label="Operação do evento">
         <span><i class="status-dot status-dot--ok"></i>${stats.confirmados} confirmados</span>

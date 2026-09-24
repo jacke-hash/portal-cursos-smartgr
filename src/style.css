@@ -495,6 +495,7 @@ h2 {
 }
 .event-kpi { display: flex; flex-direction: column; justify-content: space-between; }
 .event-kpi--sales { background: #173f70; color: #fff; }
+.event-kpi--leader { justify-content: flex-start; gap: 16px; }
 .event-kpi-label {
   display: block;
   color: var(--muted);
@@ -592,9 +593,14 @@ h2 {
 .donut-legend-row > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 600; }
 .donut-legend-row b { display: flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; }
 .donut-swatch { width: 9px; height: 9px; border-radius: 50%; }
-.leader-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.leader-person strong { overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.leader-mark { display: inline-grid; place-items: center; width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; background: #fff3cc; color: #8a5b00; font-size: 12px; font-weight: 800; }
+.leader-list { display: grid; gap: 12px; margin-top: 4px; }
+.leader-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.leader-row b { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: 0 0 auto; font-size: 12.5px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.leader-name { overflow: hidden; font-size: 13.5px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.leader-mark { display: inline-grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 9px; background: #fff3cc; color: #8a5b00; font-size: 11px; font-weight: 800; }
+.leader-row:first-child .leader-mark { background: #fff3cc; color: #8a5b00; }
+.leader-row:nth-child(2) .leader-mark { background: var(--soft); color: var(--muted); }
+.leader-row:nth-child(3) .leader-mark { background: var(--soft); color: var(--muted); }
 .event-operational-line { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; padding: 11px 25px; background: #fbfcfe; color: var(--muted); font-size: 12px; font-weight: 600; }
 .event-operational-line span { display: inline-flex; align-items: center; gap: 7px; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
