@@ -804,6 +804,8 @@ function eventoInsights() {
 
 const AUDIENCE_PALETTE = ["#173f70", "#3b6ea5", "#5c7ca3", "#7fa0c9", "#9dc0dd", "#c3d8ea", "#8a99ab"];
 
+const _pctChip = (pct) => `<span class="pct-chip">${pct}%</span>`;
+
 function _donutChart(grupo) {
   const top = grupo.slice(0, 6);
   const restante = grupo.slice(6).reduce((soma, item) => soma + item.total, 0);
@@ -824,7 +826,7 @@ function _donutChart(grupo) {
     <div class="donut-legend-row">
       <span class="donut-swatch" style="background:${AUDIENCE_PALETTE[idx % AUDIENCE_PALETTE.length]}"></span>
       <span title="${item.nome}">${item.nome}</span>
-      <b>${item.total} <em>${pct}%</em></b>
+      <b>${item.total} ${_pctChip(pct)}</b>
     </div>`;
   }).join("");
 
@@ -851,7 +853,7 @@ function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4) {
         <span>${label}</span>
         <div class="audience-group-actions">
           <button type="button" class="chart-toggle-btn" data-action="toggle-audience-chart" data-group="${grupoKey}" title="Ver como ${outroModo === "donut" ? "rosca" : "barras"}">${outroModo === "donut" ? icon.pieChart() : icon.barChart()}</button>
-          <b>${localTotal}${headerPct !== null ? ` <em>${headerPct}%</em>` : ""}</b>
+          <b>${localTotal}${headerPct !== null ? ` ${_pctChip(headerPct)}` : ""}</b>
         </div>
       </div>
       ${body}
@@ -865,7 +867,7 @@ function _statList(grupo, expanded, grupoKey, localTotal, limitDefault) {
   const outras = Math.max(0, grupo.length - topo.length);
   const row = (item) => {
     const pct = localTotal ? Math.round((item.total / localTotal) * 100) : 0;
-    return `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${item.total} <em>${pct}%</em></b></div>`;
+    return `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${item.total} ${_pctChip(pct)}</b></div>`;
   };
   return `
     <div class="formation-list">${topo.map(row).join("") || `<span class="event-empty-data">Sem dados</span>`}</div>
@@ -889,8 +891,8 @@ function eventoDashboardContent(stats) {
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
         ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos)}
         ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
-        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${consumidor.total} <em>${pctConsumidor}%</em></b></div>
-        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${semPerfil.total} <em>${pctSemPerfil}%</em></b></div>` : ""}
+        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${consumidor.total} ${_pctChip(pctConsumidor)}</b></div>
+        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${semPerfil.total} ${_pctChip(pctSemPerfil)}</b></div>` : ""}
       </article>
       <article class="event-kpi event-kpi--leader">
         <span class="event-kpi-label">Quem mais vendeu</span>
