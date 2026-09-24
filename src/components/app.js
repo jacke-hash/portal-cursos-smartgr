@@ -46,7 +46,7 @@ const PAGE_SIZE = 25;
 // lugares e 3 deles esqueciam a chave `inativos`, deixando o filtro de
 // inativos num estado inconsistente após certas navegações.
 const DEFAULT_INSCRITO_FILTERS = Object.freeze({
-  status: "", vendedor: "", variante: "", impresso: "", inativos: "",
+  status: "", vendedor: "", variante: "", impresso: "", inativos: "", valor: "",
 });
 
 // Direção padrão ao trocar a chave de ordenação dos cursos — cada opção já
@@ -982,6 +982,11 @@ function _filtersBar(vendedores, variantes) {
         <option value="all"  ${state.filters.inativos === "all"  ? "selected" : ""}>Todos (incluindo inativos)</option>
         <option value="only" ${state.filters.inativos === "only" ? "selected" : ""}>Somente inativos</option>
       </select>
+      <select class="filter-select" data-filter="valor">
+        <option value="">Valor: todos</option>
+        <option value="zero" ${state.filters.valor === "zero" ? "selected" : ""}>Gratuitos (R$ 0)</option>
+        <option value="pago" ${state.filters.valor === "pago" ? "selected" : ""}>Pagos (acima de R$ 0)</option>
+      </select>
       ${hasFilters() ? `<button class="btn-clear" data-action="clear-filters">Limpar filtros</button>` : ""}
     </div>`;
 }
@@ -1322,6 +1327,8 @@ function filteredInscritos() {
   if (state.filters.variante) list = list.filter(i => i.variante === state.filters.variante);
   if (state.filters.impresso === "true")  list = list.filter(i => i.impresso === true);
   if (state.filters.impresso === "false") list = list.filter(i => !i.impresso);
+  if (state.filters.valor === "zero") list = list.filter(i => Number(i.valorFinalPago ?? i.valor ?? 0) === 0);
+  if (state.filters.valor === "pago") list = list.filter(i => Number(i.valorFinalPago ?? i.valor ?? 0) > 0);
 
   list.sort((a, b) => {
     let av = state.sortKey === "valorFinalPago" ? valorPago(a) : (a[state.sortKey] ?? "");
