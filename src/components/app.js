@@ -212,11 +212,15 @@ let state = {
   sortDir: "desc",
   page: 1,
   selectedIds: new Set(),   // seleção manual de inscritos (bulk actions)
-  // Painel "Público por perfil": modo de gráfico (bar/donut) e expansão da
-  // lista, por grupo (profissional/estudante).
-  audienceView: {
+  // Painéis de estatística do evento (público, vendedores, região): modo de
+  // gráfico (bar/donut) e expansão da lista, por grupo.
+  statsView: {
     profissional: { chart: "bar", expanded: false },
     estudante:    { chart: "bar", expanded: false },
+    publico:      { chart: "bar", expanded: false },
+    vendedores:   { chart: "bar", expanded: false },
+    estado:       { chart: "bar", expanded: false },
+    cidade:       { chart: "bar", expanded: false },
   },
   // [fix] Flags de "primeiro snapshot recebido" — evitam mostrar "nenhum resultado"
   // antes do Firestore responder (corrida entre render() inicial e onSnapshot assíncrono)
@@ -767,16 +771,34 @@ function eventoInsights() {
   const semPerfil     = ativos.filter((i) => !["profissional", "estudante", "consumidor"].includes(i.perfil));
 
   const vendedores = agrupar(ativos, "vendedor", "Venda direta");
+  const estados = agrupar(ativos, "estado", "Não informado");
+  const cidades = agrupar(ativos, "cidade", "Não informado");
+
+  const publicoTotais = {
+    profissional: somaQuantidade(profissionais),
+    estudante:    somaQuantidade(estudantes),
+    consumidor:   somaQuantidade(consumidores),
+    semPerfil:    somaQuantidade(semPerfil),
+  };
+  const publicoOverview = [
+    { nome: "Profissional", total: publicoTotais.profissional },
+    { nome: "Estudante", total: publicoTotais.estudante },
+    { nome: "Consumidor final", total: publicoTotais.consumidor },
+    ...(publicoTotais.semPerfil ? [{ nome: "Não informado", total: publicoTotais.semPerfil }] : []),
+  ].filter((g) => g.total > 0).sort((a, b) => b.total - a.total);
 
   return {
     ingressos: somaQuantidade(ativos),
     publico: {
-      profissional: { total: somaQuantidade(profissionais), formacoes: agrupar(profissionais, "formacao", "Não informada") },
-      estudante:    { total: somaQuantidade(estudantes), formacoes: agrupar(estudantes, "formacao", "Não informada") },
-      consumidor:   { total: somaQuantidade(consumidores) },
-      semPerfil:    { total: somaQuantidade(semPerfil) },
+      profissional: { total: publicoTotais.profissional, formacoes: agrupar(profissionais, "formacao", "Não informada") },
+      estudante:    { total: publicoTotais.estudante, formacoes: agrupar(estudantes, "formacao", "Não informada") },
+      consumidor:   { total: publicoTotais.consumidor },
+      semPerfil:    { total: publicoTotais.semPerfil },
+      overview:     publicoOverview,
     },
+    vendedores,
     vendedorLider: vendedores[0] || { nome: "Sem vendas", total: 0 },
+    regiao: { estados, cidades },
   };
 }
 
@@ -796,49 +818,66 @@ function _donutChart(grupo) {
     return `${AUDIENCE_PALETTE[idx % AUDIENCE_PALETTE.length]} ${inicio}deg ${fim}deg`;
   }).join(", ");
 
-  const legenda = items.map((item, idx) => `
+  const legenda = items.map((item, idx) => {
+    const pct = totalGeral ? Math.round((item.total / totalGeral) * 100) : 0;
+    return `
     <div class="donut-legend-row">
       <span class="donut-swatch" style="background:${AUDIENCE_PALETTE[idx % AUDIENCE_PALETTE.length]}"></span>
       <span title="${item.nome}">${item.nome}</span>
-      <b>${item.total}</b>
-    </div>`).join("");
+      <b>${item.total} <em>${pct}%</em></b>
+    </div>`;
+  }).join("");
 
   return items.length
     ? `<div class="donut-wrap"><div class="donut-chart" style="background: conic-gradient(${stops})"></div><div class="donut-legend">${legenda}</div></div>`
     : `<span class="event-empty-data">Sem dados</span>`;
 }
 
-function _audienceGroup(label, grupoKey, grupo, total) {
-  const view = state.audienceView[grupoKey] || { chart: "bar", expanded: false };
+// Painel genérico de estatística (lista com % + barra, ou rosca), reusado
+// pelo público por perfil/formação, vendedores e região (estado/cidade).
+// `pctBase`, quando informado, mostra no cabeçalho a % do grupo sobre esse
+// total geral (ex.: profissionais são 40% de todos os ingressos); sem ele,
+// o cabeçalho mostra só a contagem — usado quando o grupo já cobre 100% do
+// evento (vendedores, região, visão geral de público).
+function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4) {
+  const view = state.statsView[grupoKey] || { chart: "bar", expanded: false };
   const outroModo = view.chart === "bar" ? "donut" : "bar";
-  const body = view.chart === "donut" ? _donutChart(grupo) : _formationListFor(grupo, view.expanded, grupoKey);
+  const localTotal = grupo.reduce((soma, item) => soma + item.total, 0);
+  const body = view.chart === "donut" ? _donutChart(grupo) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault);
+  const headerPct = pctBase ? Math.round((localTotal / pctBase) * 100) : null;
   return `
     <div class="audience-group">
       <div class="audience-group-title">
         <span>${label}</span>
         <div class="audience-group-actions">
           <button type="button" class="chart-toggle-btn" data-action="toggle-audience-chart" data-group="${grupoKey}" title="Ver como ${outroModo === "donut" ? "rosca" : "barras"}">${outroModo === "donut" ? icon.pieChart() : icon.barChart()}</button>
-          <b>${total}</b>
+          <b>${localTotal}${headerPct !== null ? ` <em>${headerPct}%</em>` : ""}</b>
         </div>
       </div>
       ${body}
     </div>`;
 }
 
-function _formationListFor(grupo, expanded, grupoKey) {
+function _statList(grupo, expanded, grupoKey, localTotal, limitDefault) {
   const max = grupo[0]?.total || 1;
-  const limite = expanded ? grupo.length : 4;
+  const limite = expanded ? grupo.length : limitDefault;
   const topo = grupo.slice(0, limite);
   const outras = Math.max(0, grupo.length - topo.length);
+  const row = (item) => {
+    const pct = localTotal ? Math.round((item.total / localTotal) * 100) : 0;
+    return `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${item.total} <em>${pct}%</em></b></div>`;
+  };
   return `
-    <div class="formation-list">${topo.map((item) => `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${item.total}</b></div>`).join("") || `<span class="event-empty-data">Sem dados</span>`}</div>
-    ${outras ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">+ ${outras} outras</button>` : (expanded && grupo.length > 4 ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">ver menos</button>` : "")}`;
+    <div class="formation-list">${topo.map(row).join("") || `<span class="event-empty-data">Sem dados</span>`}</div>
+    ${outras ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">+ ${outras} outras</button>` : (expanded && grupo.length > limitDefault ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">ver menos</button>` : "")}`;
 }
 
 function eventoDashboardContent(stats) {
   const insights = eventoInsights();
   const { profissional, estudante, consumidor, semPerfil } = insights.publico;
   const taxaConfirmacao = insights.ingressos ? Math.round((stats.confirmados / insights.ingressos) * 100) : 0;
+  const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
+  const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
   return `
     <section class="event-dashboard" aria-label="Resumo do evento">
       <article class="event-kpi event-kpi--sales">
@@ -848,10 +887,10 @@ function eventoDashboardContent(stats) {
       </article>
       <article class="event-audience">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_audienceGroup("Profissionais", "profissional", profissional.formacoes, profissional.total)}
-        ${_audienceGroup("Estudantes", "estudante", estudante.formacoes, estudante.total)}
-        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${consumidor.total}</b></div>
-        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${semPerfil.total}</b></div>` : ""}
+        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos)}
+        ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
+        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${consumidor.total} <em>${pctConsumidor}%</em></b></div>
+        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${semPerfil.total} <em>${pctSemPerfil}%</em></b></div>` : ""}
       </article>
       <article class="event-kpi event-kpi--leader">
         <span class="event-kpi-label">Quem mais vendeu</span>
@@ -864,6 +903,26 @@ function eventoDashboardContent(stats) {
         <span><i class="status-dot status-dot--info"></i>${stats.presentes} presentes</span>
         ${stats.totalInativos ? `<span><i class="status-dot status-dot--muted"></i>${stats.totalInativos} inativo${stats.totalInativos !== 1 ? "s" : ""}</span>` : ""}
       </div>
+    </section>`;
+}
+
+function eventoAnalyticsContent() {
+  const insights = eventoInsights();
+  return `
+    <section class="event-analytics" aria-label="Analytics do evento">
+      <article class="analytics-panel">
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Vendedores</span><strong>${insights.vendedores.length} vendedor${insights.vendedores.length !== 1 ? "es" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6)}
+      </article>
+      <article class="analytics-panel">
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Público — visão geral</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        ${_statGroup("Por perfil", "publico", insights.publico.overview, null, 4)}
+      </article>
+      <article class="analytics-panel">
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Região</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        ${_statGroup("Por estado", "estado", insights.regiao.estados, null, 5)}
+        ${_statGroup("Por cidade", "cidade", insights.regiao.cidades, null, 5)}
+      </article>
     </section>`;
 }
 
@@ -988,6 +1047,10 @@ function eventoView() {
 
     <div id="event-dashboard">
       ${eventoDashboardContent(stats)}
+    </div>
+
+    <div id="event-analytics">
+      ${eventoAnalyticsContent()}
     </div>
 
     ${batchActionsBar()}
@@ -1330,6 +1393,16 @@ function _updateFilterSelectOptions(selector, defaultLabel, values, currentValue
   if (el.innerHTML !== html) el.innerHTML = html;
 }
 
+// Atualiza só os painéis de estatística (não mexe na tabela/paginação) —
+// usado pelos toggles de gráfico/expansão pra não perder o scroll/seleção.
+function refreshEventStatsPanels() {
+  const stats = inscritosStats();
+  const eventDashboard = root.querySelector("#event-dashboard");
+  const eventAnalytics = root.querySelector("#event-analytics");
+  if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(stats);
+  if (eventAnalytics) eventAnalytics.innerHTML = eventoAnalyticsContent();
+}
+
 function eventoViewPartialUpdate() {
   const inscritos    = filteredInscritos();
   const paginated    = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
@@ -1339,6 +1412,7 @@ function eventoViewPartialUpdate() {
   const variantes    = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
 
   const eventDashboard = root.querySelector("#event-dashboard");
+  const eventAnalytics = root.querySelector("#event-analytics");
   const resultsCount   = root.querySelector("#results-count");
   const tbody          = root.querySelector("#inscritos-tbody");
   const paginationWrap = root.querySelector("#pagination-wrap");
@@ -1349,6 +1423,7 @@ function eventoViewPartialUpdate() {
   const filtersBtnDot  = root.querySelector(".btn-filters-toggle");
 
   if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(stats);
+  if (eventAnalytics) eventAnalytics.innerHTML = eventoAnalyticsContent();
 
   if (batchBar) batchBar.outerHTML = batchActionsBar();
 
@@ -1455,17 +1530,17 @@ function handleClick(e) {
       saveNav();
       cursoEventosPartialUpdate();
 
-    // ── Painel "Público por perfil" ─────────────────────────────────────────
+    // ── Painéis de estatística do evento (público, vendedores, região) ─────
     } else if (action === "toggle-audience-expand") {
       const key = el.dataset.group;
-      state.audienceView[key].expanded = !state.audienceView[key].expanded;
-      const eventDashboard = root.querySelector("#event-dashboard");
-      if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(inscritosStats());
+      state.statsView[key] = state.statsView[key] || { chart: "bar", expanded: false };
+      state.statsView[key].expanded = !state.statsView[key].expanded;
+      refreshEventStatsPanels();
     } else if (action === "toggle-audience-chart") {
       const key = el.dataset.group;
-      state.audienceView[key].chart = state.audienceView[key].chart === "bar" ? "donut" : "bar";
-      const eventDashboard = root.querySelector("#event-dashboard");
-      if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(inscritosStats());
+      state.statsView[key] = state.statsView[key] || { chart: "bar", expanded: false };
+      state.statsView[key].chart = state.statsView[key].chart === "bar" ? "donut" : "bar";
+      refreshEventStatsPanels();
 
     // ── Status do curso (arquivamento/ocultação) ───────────────────────────────
     } else if (action === "curso-ocultar") {
@@ -1770,9 +1845,13 @@ function openEvento(eventoId) {
   state.search = "";
   state.filters = { ...DEFAULT_INSCRITO_FILTERS };
   state.page = 1;
-  state.audienceView = {
+  state.statsView = {
     profissional: { chart: "bar", expanded: false },
     estudante:    { chart: "bar", expanded: false },
+    publico:      { chart: "bar", expanded: false },
+    vendedores:   { chart: "bar", expanded: false },
+    estado:       { chart: "bar", expanded: false },
+    cidade:       { chart: "bar", expanded: false },
   };
   saveNav();
   if (unsubInscritos) unsubInscritos();
