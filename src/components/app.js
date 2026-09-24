@@ -896,17 +896,41 @@ function _statList(grupo, expanded, grupoKey, localTotal, limitDefault) {
     ${outras ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">+ ${outras} outras</button>` : (expanded && grupo.length > limitDefault ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">ver menos</button>` : "")}`;
 }
 
+// Rosca compacta pro card escuro (Ingressos vendidos) — mesma técnica dos
+// outros gráficos, mas com miolo na cor do card (não branco) e paleta clara.
+function _salesDonut(pctVendido) {
+  const p = Math.max(0, Math.min(100, pctVendido));
+  return `
+    <div class="sales-donut" style="background: conic-gradient(#fff ${p}%, rgba(255,255,255,.22) ${p}% 100%)">
+      <span class="sales-donut-pct">${p}%</span>
+    </div>`;
+}
+
 function eventoDashboardContent(stats) {
   const insights = eventoInsights();
   const { profissional, estudante, consumidor, semPerfil } = insights.publico;
   const taxaConfirmacao = insights.ingressos ? Math.round((stats.confirmados / insights.ingressos) * 100) : 0;
   const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
   const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
+
+  // Capacidade total = vendidos + vagas restantes reportadas pela Shopify.
+  // Sem esse dado (evento ainda não sincronizado), volta ao card simples.
+  const restante = state.evento?.capacidadeDisponivel;
+  const temCapacidade = typeof restante === "number";
+  const capacidadeTotal = temCapacidade ? insights.ingressos + restante : null;
+  const pctVendido = temCapacidade && capacidadeTotal ? Math.round((insights.ingressos / capacidadeTotal) * 100) : null;
+
   return `
     <section class="event-dashboard" aria-label="Resumo do evento">
       <article class="event-kpi event-kpi--sales">
         <span class="event-kpi-label">Ingressos vendidos</span>
-        <strong class="event-kpi-value">${insights.ingressos}</strong>
+        <div class="sales-hero">
+          <div class="sales-hero-main">
+            <strong class="event-kpi-value">${insights.ingressos}</strong>
+            ${temCapacidade ? `<span class="sales-hero-total">de ${capacidadeTotal} disponíveis · ${restante} restante${restante !== 1 ? "s" : ""}</span>` : ""}
+          </div>
+          ${temCapacidade ? _salesDonut(pctVendido) : ""}
+        </div>
         <span class="event-kpi-note">${stats.confirmados} confirmado${stats.confirmados !== 1 ? "s" : ""} · ${taxaConfirmacao}% da base</span>
       </article>
       <article class="event-audience">

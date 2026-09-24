@@ -342,7 +342,26 @@ function extractCustomer(order) {
 
 // ── Recalculo de agregados ────────────────────────────────────────────────────
 
-async function recalcEvento(db, productId, variantId, varianteTitle, date) {
+// Estoque atual da variante na Shopify (vagas ainda não vendidas). Nunca
+// lança erro — retorna null em qualquer falha, e quem chama simplesmente
+// não atualiza o campo (mantém o último valor conhecido).
+async function getVariantInventory(variantId, accessToken) {
+  if (!accessToken) return null;
+  try {
+    const resp = await fetch(
+      `https://${SHOPIFY_STORE}/admin/api/2024-01/variants/${variantId}.json?fields=inventory_quantity`,
+      { headers: { 'X-Shopify-Access-Token': accessToken } }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const n = data.variant?.inventory_quantity;
+    return typeof n === 'number' ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recalcEvento(db, productId, variantId, varianteTitle, date, env) {
   const inscritos = await db.list(`cursos/${productId}/eventos/${variantId}/inscritos`);
   // Agregados do portal contam apenas inscritos pagos — cancelados, reembolsados,
   // pendentes, etc. seguem registrados no Firestore para auditoria, mas nunca
@@ -351,20 +370,24 @@ async function recalcEvento(db, productId, variantId, varianteTitle, date) {
   const total       = ativos.length;
   const confirmados = ativos.filter(i => i.status === 'Confirmado' || i.status === 'Presente').length;
 
+  // Capacidade disponível: vagas restantes reportadas pela Shopify (estoque
+  // da variante). Somada ao total de inscritos ativos, dá a capacidade total
+  // do evento — não é armazenada separadamente pra nunca ficar dessincronizada.
+  const capacidadeDisponivel = await getVariantInventory(variantId, env?.SHOPIFY_ACCESS_TOKEN);
+
   const exists = await db.get(`cursos/${productId}/eventos/${variantId}`);
+  const patch = { totalInscritos: total, confirmados, updatedAt: new Date() };
+  if (capacidadeDisponivel !== null) patch.capacidadeDisponivel = capacidadeDisponivel;
+
   if (exists) {
-    await db.patch(`cursos/${productId}/eventos/${variantId}`, {
-      totalInscritos: total, confirmados, updatedAt: new Date(),
-    });
+    await db.patch(`cursos/${productId}/eventos/${variantId}`, patch);
   } else {
     await db.set(`cursos/${productId}/eventos/${variantId}`, {
       varianteTitle: varianteTitle || '',
       varianteId: variantId,
       data: date || null,
       ativo: true,
-      totalInscritos: total,
-      confirmados,
-      updatedAt: new Date(),
+      ...patch,
     });
   }
 }
@@ -503,7 +526,7 @@ async function processOrder(db, order, financialStatus, env) {
     const key = `${productId}:${variantId}`;
     if (!seen.has(key)) {
       seen.add(key);
-      await recalcEvento(db, productId, variantId, varianteTitle, date);
+      await recalcEvento(db, productId, variantId, varianteTitle, date, env);
       await recalcCurso(db, productId);
       console.log(`[processOrder] Agregados recalculados: curso=${productId} evento=${variantId}`);
     }
@@ -515,7 +538,7 @@ async function processOrder(db, order, financialStatus, env) {
 
 // Atualiza financialStatus + status de inscritos existentes sem criar novos registros.
 // Usada quando orders/updated chega com status não-pago (pending, expired, voided, etc.).
-async function updateInscritoFinancialStatus(db, order, financialStatus) {
+async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
   const statusLabel = shopifyStatusLabel(financialStatus, order.cancelled_at);
   if (!statusLabel) {
     console.log(`[updateInscritoFinancialStatus] Status sem label: ${financialStatus} — ignorado`);
@@ -534,7 +557,7 @@ async function updateInscritoFinancialStatus(db, order, financialStatus) {
     if (existing) {
       await db.patch(path, { financialStatus, status: statusLabel, updatedAt: now });
       console.log(`[updateInscritoFinancialStatus] ${inscritoId}: ${financialStatus} → "${statusLabel}"`);
-      await recalcEvento(db, productId, variantId, existing.variante || '', null);
+      await recalcEvento(db, productId, variantId, existing.variante || '', null, env);
       await recalcCurso(db, productId);
     } else {
       console.log(`[updateInscritoFinancialStatus] Inscrito não encontrado: ${inscritoId} — nenhum registro criado`);
@@ -542,7 +565,7 @@ async function updateInscritoFinancialStatus(db, order, financialStatus) {
   }
 }
 
-async function handleCancelled(db, order) {
+async function handleCancelled(db, order, env) {
   for (const item of order.line_items || []) {
     const productId = Number(item.product_id);
     if (!VALID_PRODUCT_IDS.has(productId) || !item.variant_id) continue;
@@ -554,7 +577,7 @@ async function handleCancelled(db, order) {
     if (existing) {
       await db.patch(path, { status: 'Cancelado', financialStatus: 'cancelled', updatedAt: new Date() });
       console.log(`[webhook] Pedido cancelado: ${order.name}`);
-      await recalcEvento(db, productId, variantId, existing.variante || '', null);
+      await recalcEvento(db, productId, variantId, existing.variante || '', null, env);
       await recalcCurso(db, productId);
     }
   }
@@ -630,7 +653,7 @@ export default {
 
           if (payload.cancelled_at) {
             // Pedido cancelado: handleCancelled define financialStatus='cancelled'
-            await handleCancelled(db, payload);
+            await handleCancelled(db, payload, env);
             console.log(`[webhook] Pedido cancelado (via updated) ${payload.name}`);
           } else {
             const fs = payload.financial_status;
@@ -640,7 +663,7 @@ export default {
               console.log(`[webhook] Pedido atualizado ${payload.name}: ${n} inscrição(ões) financialStatus=${fs}`);
             } else {
               // Pedido não pago (pending, authorized, expired, voided): atualiza status de registros existentes
-              await updateInscritoFinancialStatus(db, payload, fs);
+              await updateInscritoFinancialStatus(db, payload, fs, env);
               console.log(`[webhook] Status atualizado ${payload.name}: financialStatus=${fs}`);
             }
           }
@@ -648,7 +671,7 @@ export default {
         }
 
         case 'orders/cancelled': {
-          await handleCancelled(db, payload);
+          await handleCancelled(db, payload, env);
           console.log(`[webhook] Pedido cancelado ${payload.name}`);
           break;
         }

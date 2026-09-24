@@ -425,6 +425,11 @@ async function sync() {
             data:          date ? Timestamp.fromDate(date) : null,
             ativo:         !encerrado,
             encerrado,
+            // Vagas restantes reportadas pela Shopify (estoque da variante) —
+            // somada ao totalInscritos ativos dá a capacidade total do evento.
+            // Omitido (não sobrescreve) quando a Shopify não reporta um número,
+            // pra nunca zerar um valor bom por uma falha pontual da API.
+            ...(typeof variant.inventory_quantity === 'number' ? { capacidadeDisponivel: variant.inventory_quantity } : {}),
             updatedAt:     Timestamp.now(),
           },
           { merge: true }   // preserva totalInscritos/confirmados existentes
