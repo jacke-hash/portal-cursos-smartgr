@@ -46,4 +46,10 @@ export const icon = {
 
   filter: (n = 15) =>
     sq(n, `<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>`),
+
+  barChart: (n = 14) =>
+    sq(n, `<line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/>`),
+
+  pieChart: (n = 14) =>
+    sq(n, `<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>`),
 };

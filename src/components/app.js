@@ -212,6 +212,12 @@ let state = {
   sortDir: "desc",
   page: 1,
   selectedIds: new Set(),   // seleção manual de inscritos (bulk actions)
+  // Painel "Público por perfil": modo de gráfico (bar/donut) e expansão da
+  // lista, por grupo (profissional/estudante).
+  audienceView: {
+    profissional: { chart: "bar", expanded: false },
+    estudante:    { chart: "bar", expanded: false },
+  },
   // [fix] Flags de "primeiro snapshot recebido" — evitam mostrar "nenhum resultado"
   // antes do Firestore responder (corrida entre render() inicial e onSnapshot assíncrono)
   cursosLoaded: false,
@@ -774,13 +780,59 @@ function eventoInsights() {
   };
 }
 
-function _formationList(grupo, limite = 4) {
+const AUDIENCE_PALETTE = ["#173f70", "#3b6ea5", "#5c7ca3", "#7fa0c9", "#9dc0dd", "#c3d8ea", "#8a99ab"];
+
+function _donutChart(grupo) {
+  const top = grupo.slice(0, 6);
+  const restante = grupo.slice(6).reduce((soma, item) => soma + item.total, 0);
+  const items = restante > 0 ? [...top, { nome: "Outras", total: restante }] : top;
+  const totalGeral = items.reduce((soma, item) => soma + item.total, 0) || 1;
+
+  let acumulado = 0;
+  const stops = items.map((item, idx) => {
+    const inicio = (acumulado / totalGeral) * 360;
+    acumulado += item.total;
+    const fim = (acumulado / totalGeral) * 360;
+    return `${AUDIENCE_PALETTE[idx % AUDIENCE_PALETTE.length]} ${inicio}deg ${fim}deg`;
+  }).join(", ");
+
+  const legenda = items.map((item, idx) => `
+    <div class="donut-legend-row">
+      <span class="donut-swatch" style="background:${AUDIENCE_PALETTE[idx % AUDIENCE_PALETTE.length]}"></span>
+      <span title="${item.nome}">${item.nome}</span>
+      <b>${item.total}</b>
+    </div>`).join("");
+
+  return items.length
+    ? `<div class="donut-wrap"><div class="donut-chart" style="background: conic-gradient(${stops})"></div><div class="donut-legend">${legenda}</div></div>`
+    : `<span class="event-empty-data">Sem dados</span>`;
+}
+
+function _audienceGroup(label, grupoKey, grupo, total) {
+  const view = state.audienceView[grupoKey] || { chart: "bar", expanded: false };
+  const outroModo = view.chart === "bar" ? "donut" : "bar";
+  const body = view.chart === "donut" ? _donutChart(grupo) : _formationListFor(grupo, view.expanded, grupoKey);
+  return `
+    <div class="audience-group">
+      <div class="audience-group-title">
+        <span>${label}</span>
+        <div class="audience-group-actions">
+          <button type="button" class="chart-toggle-btn" data-action="toggle-audience-chart" data-group="${grupoKey}" title="Ver como ${outroModo === "donut" ? "rosca" : "barras"}">${outroModo === "donut" ? icon.pieChart() : icon.barChart()}</button>
+          <b>${total}</b>
+        </div>
+      </div>
+      ${body}
+    </div>`;
+}
+
+function _formationListFor(grupo, expanded, grupoKey) {
   const max = grupo[0]?.total || 1;
+  const limite = expanded ? grupo.length : 4;
   const topo = grupo.slice(0, limite);
   const outras = Math.max(0, grupo.length - topo.length);
   return `
     <div class="formation-list">${topo.map((item) => `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${item.total}</b></div>`).join("") || `<span class="event-empty-data">Sem dados</span>`}</div>
-    ${outras ? `<span class="event-more-data">+ ${outras} outras</span>` : ""}`;
+    ${outras ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">+ ${outras} outras</button>` : (expanded && grupo.length > 4 ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">ver menos</button>` : "")}`;
 }
 
 function eventoDashboardContent(stats) {
@@ -796,14 +848,8 @@ function eventoDashboardContent(stats) {
       </article>
       <article class="event-audience">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        <div class="audience-group">
-          <div class="audience-group-title"><span>Profissionais</span><b>${profissional.total}</b></div>
-          ${_formationList(profissional.formacoes)}
-        </div>
-        <div class="audience-group">
-          <div class="audience-group-title"><span>Estudantes</span><b>${estudante.total}</b></div>
-          ${_formationList(estudante.formacoes)}
-        </div>
+        ${_audienceGroup("Profissionais", "profissional", profissional.formacoes, profissional.total)}
+        ${_audienceGroup("Estudantes", "estudante", estudante.formacoes, estudante.total)}
         <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${consumidor.total}</b></div>
         ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${semPerfil.total}</b></div>` : ""}
       </article>
@@ -1409,6 +1455,18 @@ function handleClick(e) {
       saveNav();
       cursoEventosPartialUpdate();
 
+    // ── Painel "Público por perfil" ─────────────────────────────────────────
+    } else if (action === "toggle-audience-expand") {
+      const key = el.dataset.group;
+      state.audienceView[key].expanded = !state.audienceView[key].expanded;
+      const eventDashboard = root.querySelector("#event-dashboard");
+      if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(inscritosStats());
+    } else if (action === "toggle-audience-chart") {
+      const key = el.dataset.group;
+      state.audienceView[key].chart = state.audienceView[key].chart === "bar" ? "donut" : "bar";
+      const eventDashboard = root.querySelector("#event-dashboard");
+      if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(inscritosStats());
+
     // ── Status do curso (arquivamento/ocultação) ───────────────────────────────
     } else if (action === "curso-ocultar") {
       withErrorToast(updateCurso(el.dataset.cursoId, { status: CURSO_STATUS.HIDDEN }));
@@ -1712,6 +1770,10 @@ function openEvento(eventoId) {
   state.search = "";
   state.filters = { ...DEFAULT_INSCRITO_FILTERS };
   state.page = 1;
+  state.audienceView = {
+    profissional: { chart: "bar", expanded: false },
+    estudante:    { chart: "bar", expanded: false },
+  };
   saveNav();
   if (unsubInscritos) unsubInscritos();
   // [alteração 4] snapshot → partial update; scroll preservado
