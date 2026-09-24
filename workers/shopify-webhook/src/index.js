@@ -294,12 +294,29 @@ async function getCustomerCpf(customerId, accessToken) {
   }
 }
 
+// Deriva a formação exibida a partir do perfil_cliente informado no checkout:
+// profissional usa a profissão declarada; estudante e consumidor final não têm
+// profissão, então são rotulados explicitamente em vez de ficarem em branco.
+// Pedidos antigos sem perfil_cliente caem no fallback pelos nomes legados.
+function extractFormacao(attributes) {
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const perfil = norm(attributes.find((a) => norm(a.name) === 'perfil_cliente')?.value);
+
+  if (perfil === 'profissional') {
+    const profissao = attributes.find((a) => norm(a.name) === 'profissao_cliente')?.value || '';
+    if (profissao) return profissao;
+  }
+  if (perfil === 'estudante') return 'Estudante';
+  if (perfil === 'consumidor' || perfil === 'consumidor_final' || perfil === 'consumidor final') return 'Consumidor Final';
+
+  return attributes.find(({ name }) =>
+    ['formacao', 'formação', 'profissao', 'profissão', 'profissao_cliente', 'area de atuacao', 'área de atuação', 'ocupacao', 'ocupação']
+      .includes(norm(name))
+  )?.value || '';
+}
+
 function extractCustomer(order) {
   const attributes = order.note_attributes || [];
-  const formationAttribute = attributes.find(({ name }) =>
-    ['formacao', 'formação', 'profissao', 'profissão', 'area de atuacao', 'área de atuação', 'ocupacao', 'ocupação']
-      .includes(String(name || '').trim().toLowerCase())
-  );
   return {
     cliente: [
       order.billing_address?.first_name || order.customer?.first_name || '',
@@ -311,7 +328,7 @@ function extractCustomer(order) {
     estado:   order.billing_address?.province || order.shipping_address?.province || '',
     empresa:  order.billing_address?.company  || order.customer?.default_address?.company || '',
     vendedor: attributes.find(a => a.name === 'Affiliate')?.value || '',
-    formacao: formationAttribute?.value || '',
+    formacao: extractFormacao(attributes),
   };
 }
 
