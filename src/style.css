@@ -5,8 +5,13 @@
   --pink:      #ff4fa3;
   --ink:       #11213a;
   --muted:     #647084;
-  --line:      #dfe5ee;
-  --soft:      #f5f7fb;
+  --line:      #e1e7f0;
+  /* Antes era quase a mesma cor do fundo da página (#f5f7fb vs #f4f6fb) —
+     tudo virava a mesma poça cinza. Agora --soft é claramente mais azulada
+     (tom da marca, não cinza genérico) e o fundo da página fica bem mais
+     claro, pra branco dos cards se destacar de verdade em vez de se
+     misturar no cinza. */
+  --soft:      #eef2f9;
   --white:     #fff;
   --radius:    12px;
   --shadow:    0 4px 20px rgba(0,0,0,.05);
@@ -16,7 +21,7 @@
 
 body {
   color: var(--ink);
-  background: #f4f6fb;
+  background: #fafbfe;
   font-family: "DM Sans", Arial, sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -50,7 +55,7 @@ summary:focus-visible {
   align-items: center;
   justify-content: space-between;
   padding: 14px 0;
-  background: rgba(244, 246, 251, .95);
+  background: rgba(250, 251, 254, .9);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
   margin-bottom: 32px;
@@ -482,9 +487,9 @@ h2 {
   gap: 1px;
   overflow: hidden;
   margin-bottom: 26px;
-  border: 1px solid #dbe4f1;
+  border: 1px solid var(--line);
   border-radius: 18px;
-  background: #dbe4f1;
+  background: var(--line);
   box-shadow: 0 14px 34px rgba(26, 62, 107, .07);
 }
 .event-kpi,
@@ -638,7 +643,7 @@ h2 {
 .leader-row:first-child .leader-mark { background: #fff3cc; color: #8a5b00; }
 .leader-row:nth-child(2) .leader-mark { background: var(--soft); color: var(--muted); }
 .leader-row:nth-child(3) .leader-mark { background: var(--soft); color: var(--muted); }
-.event-operational-line { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; padding: 11px 25px; background: #fbfcfe; color: var(--muted); font-size: 12px; font-weight: 600; }
+.event-operational-line { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; padding: 11px 25px; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 600; }
 .event-operational-line span { display: inline-flex; align-items: center; gap: 7px; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .status-dot--ok { background: #1e9b63; }.status-dot--wait { background: #d49227; }.status-dot--info { background: #3971c6; }.status-dot--muted { background: #98a5b5; }
@@ -800,7 +805,7 @@ h2 {
 .filter-select {
   height: 44px;
   padding: 0 34px 0 12px;
-  border: 1px solid #dbe3f0;
+  border: 1px solid var(--line);
   border-radius: 12px;
   background-color: var(--white);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23647084' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
