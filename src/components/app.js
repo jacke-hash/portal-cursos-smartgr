@@ -1275,7 +1275,7 @@ function inscritoRow(inscrito) {
       <td>
         <button class="impresso-btn${inscrito.impresso ? " ativo" : ""}"
                 data-action="toggle-impresso" data-inscrito-id="${inscrito.id}">
-          ${inscrito.impresso ? "☑ Impresso" : "☐ Pendente"}
+          ${inscrito.impresso ? icon.check(12) : icon.square(12)} ${inscrito.impresso ? "Impresso" : "Pendente"}
         </button>
       </td>
     </tr>
@@ -1313,7 +1313,7 @@ function inscritoCard(inscrito) {
           : `<span class="status-inactive-badge status-${cls}">${inscrito.status || "—"}</span>`
         }
         <button class="impresso-btn${inscrito.impresso ? " ativo" : ""}" data-action="toggle-impresso" data-inscrito-id="${inscrito.id}">
-          ${inscrito.impresso ? "☑ Impresso" : "☐ Pendente"}
+          ${inscrito.impresso ? icon.check(12) : icon.square(12)} ${inscrito.impresso ? "Impresso" : "Pendente"}
         </button>
         ${ativo ? `
         <button class="mc-action-btn" data-action="quick-confirmado" data-inscrito-id="${inscrito.id}">✓</button>

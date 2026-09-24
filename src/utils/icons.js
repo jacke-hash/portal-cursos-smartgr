@@ -52,4 +52,10 @@ export const icon = {
 
   pieChart: (n = 14) =>
     sq(n, `<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>`),
+
+  check: (n = 13) =>
+    sq(n, `<path d="M20 6 9 17l-5-5"/>`),
+
+  square: (n = 13) =>
+    sq(n, `<rect width="18" height="18" x="3" y="3" rx="3"/>`),
 };

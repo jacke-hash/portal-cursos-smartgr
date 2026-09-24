@@ -795,18 +795,22 @@ h2 {
   padding-left: 32px;
 }
 
-/* Selects dos filtros — sem ícone SVG, seta nativa do navegador */
+/* Selects dos filtros — seta customizada (a nativa do navegador destoava
+   dos ícones SVG usados no resto da tela). */
 .filter-select {
   height: 44px;
-  padding: 0 36px 0 12px;   /* espaço à direita para a seta nativa */
+  padding: 0 34px 0 12px;
   border: 1px solid #dbe3f0;
   border-radius: 12px;
-  background: var(--white);
+  background-color: var(--white);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23647084' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
   color: var(--ink);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  appearance: auto;          /* seta nativa — sem duplicação */
+  appearance: none;
   min-width: 150px;
   transition: border-color .15s, box-shadow .15s;
 }
@@ -858,8 +862,9 @@ h2 {
   overflow-y: auto;
   max-height: 65vh;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 18px;
   background: var(--white);
+  box-shadow: 0 14px 34px rgba(26, 62, 107, .06);
 }
 
 .data-table {
@@ -877,14 +882,14 @@ h2 {
 }
 
 .data-table th {
-  padding: 12px 14px;
-  font-weight: 600;
+  padding: 14px 16px;
+  font-weight: 700;
   color: var(--muted);
   text-align: left;
   white-space: nowrap;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: .05em;
+  letter-spacing: .06em;
 }
 
 .data-table th.sortable { cursor: pointer; user-select: none; }
@@ -892,14 +897,14 @@ h2 {
 .data-table th.sort-active { color: var(--blue); }
 
 .data-table td {
-  padding: 11px 14px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--line);
   color: var(--ink);
   white-space: nowrap;
 }
 
 .data-table tr:last-child td { border-bottom: 0; }
-.data-table tbody tr:nth-child(even) td { background: #f8fafd; }
+.data-table tbody tr:nth-child(even) td { background: var(--soft); }
 .data-table tr:hover td { background: rgba(36,83,136,.05) !important; }
 
 .empty-row {
@@ -909,24 +914,30 @@ h2 {
 }
 
 /* ── STATUS SELECT ── */
+/* Mesma família de chip do pct-chip/sales-remaining (pill, sem borda pesada,
+   fundo tintado) — cada status mantém sua cor própria (é sinalização
+   funcional, não decoração), só suavizada e com o mesmo raio/proporção do
+   resto da tela em vez do badge quadrado de formulário que tinha antes. */
 .status-select {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-weight: 600;
+  border: none;
+  border-radius: 20px;
+  padding: 5px 11px 5px 12px;
+  font-size: 11.5px;
+  font-weight: 700;
   cursor: pointer;
-  transition: all .15s;
+  transition: filter .15s;
 }
+.status-select:hover { filter: brightness(0.97); }
+.status-select:focus { outline: 2px solid rgba(36,83,136,.35); outline-offset: 1px; }
 
-.status-nao-confirmado { background: #fff8e1; color: #b45309; border-color: #fde68a; }
-.status-confirmado     { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
-.status-presente       { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
-.status-ausente        { background: #f3f4f6; color: #6b7280; border-color: #d1d5db; }
-.status-remanejado     { background: #f3e8ff; color: #7e22ce; border-color: #e9d5ff; }
-.status-desistente     { background: #fce7f3; color: #be185d; border-color: #fbcfe8; }
-.status-cancelado      { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
-.status-reembolsado    { background: #fef2f2; color: #7f1d1d; border-color: #fecaca; }
+.status-nao-confirmado { background: #fef3e2; color: #a16207; }
+.status-confirmado     { background: #e2f6ea; color: #15803d; }
+.status-presente       { background: #e3edfd; color: #1d4ed8; }
+.status-ausente        { background: var(--soft); color: var(--muted); }
+.status-remanejado     { background: #f2e8fc; color: #7e22ce; }
+.status-desistente     { background: #fbe7f1; color: #be185d; }
+.status-cancelado      { background: #fbe6e6; color: #b91c1c; }
+.status-reembolsado    { background: #f7e9e9; color: #7f1d1d; }
 
 /* ── NOTE INPUT ── */
 .note {
@@ -968,22 +979,25 @@ h2 {
 
 /* ── IMPRESSO ── */
 .impresso-btn {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  background: var(--white);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: var(--soft);
   color: var(--muted);
   white-space: nowrap;
-  transition: all .15s;
+  transition: filter .15s, background .15s, color .15s;
 }
-.impresso-btn:hover { border-color: var(--blue); color: var(--blue); }
+.impresso-btn:hover { background: rgba(36,83,136,.1); color: var(--blue); }
 .impresso-btn.ativo {
-  background: #dcfce7;
+  background: #e2f6ea;
   color: #15803d;
-  border-color: #bbf7d0;
 }
+.impresso-btn.ativo:hover { filter: brightness(0.97); }
 
 /* ── BADGES ── */
 .badge-warn { color: #b45309; font-weight: 600; }
@@ -1369,13 +1383,12 @@ h2 {
 /* Badge de status para inscritos inativos (substitui o select editável) */
 .status-inactive-badge {
   display: inline-block;
-  padding: 3px 9px;
-  border-radius: 6px;
-  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  border: 1px solid;
   white-space: nowrap;
 }
 
