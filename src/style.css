@@ -905,12 +905,17 @@ h2 {
   padding: 13px 16px;
   border-bottom: 1px solid var(--line);
   color: var(--ink);
-  white-space: nowrap;
+  /* Antes forçava tudo numa linha só (e-mail, nome do ingresso...), o que
+     empurrava a tabela muito além da largura da tela e obrigava scroll
+     horizontal. Deixa quebrar — as células já são compactas (1-2 linhas
+     de conteúdo curto), então quebrar raramente acontece na prática, mas
+     quando precisa, quebra em vez de estourar. */
+  white-space: normal;
 }
 /* Colunas agrupadas (Pedido, Cliente, Ingresso) — valor principal em cima,
    contexto secundário embaixo, em vez de uma coluna cheia pra cada campo. */
 .cell-primary { font-weight: 700; color: var(--ink); }
-.cell-secondary { margin-top: 2px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.cell-secondary { margin-top: 2px; font-size: 11.5px; font-weight: 500; color: var(--muted); overflow-wrap: anywhere; }
 /* Reforço: se o navegador ainda assim detectar telefone/e-mail/CPF como
    link (Safari "data detectors" injeta <a> mesmo sem a gente escrever um),
    neutraliza a cor/sublinhado em vez de deixar o azul nativo aparecer. */
@@ -959,10 +964,13 @@ h2 {
 
 /* ── NOTE INPUT ── */
 .note {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 120px;
+  max-width: 220px;
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 4px 8px;
-  min-width: 180px;
   background: transparent;
   color: var(--ink);
   font-size: 12px;
