@@ -520,6 +520,19 @@ h2 {
 .sales-donut { position: relative; width: 58px; height: 58px; flex: 0 0 auto; border-radius: 50%; }
 .sales-donut::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: #173f70; }
 .sales-donut-pct { position: relative; z-index: 1; display: grid; place-items: center; width: 100%; height: 100%; font-size: 11px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+.sales-remaining {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(255,255,255,.14);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.sales-remaining--low { background: rgba(255, 179, 71, .25); color: #ffd9a3; }
 .event-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .event-panel-heading strong { display: block; margin-top: 3px; font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
 .event-panel-caption,

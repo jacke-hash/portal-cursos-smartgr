@@ -927,10 +927,11 @@ function eventoDashboardContent(stats) {
         <div class="sales-hero">
           <div class="sales-hero-main">
             <strong class="event-kpi-value">${insights.ingressos}</strong>
-            ${temCapacidade ? `<span class="sales-hero-total">de ${capacidadeTotal} disponíveis · ${restante} restante${restante !== 1 ? "s" : ""}</span>` : ""}
+            ${temCapacidade ? `<span class="sales-hero-total">vendidos de ${capacidadeTotal} no total</span>` : ""}
           </div>
           ${temCapacidade ? _salesDonut(pctVendido) : ""}
         </div>
+        ${temCapacidade ? `<span class="sales-remaining${restante <= 10 ? " sales-remaining--low" : ""}">${restante} vaga${restante !== 1 ? "s" : ""} restante${restante !== 1 ? "s" : ""}</span>` : ""}
         <span class="event-kpi-note">${stats.confirmados} confirmado${stats.confirmados !== 1 ? "s" : ""} · ${taxaConfirmacao}% da base</span>
       </article>
       <article class="event-audience">
