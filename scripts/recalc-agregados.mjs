@@ -72,8 +72,11 @@ async function main() {
       const inscritosSnap = await eventoDoc.ref.collection('inscritos').get();
       const inscritos = inscritosSnap.docs.map(d => d.data());
       const ativos = inscritos.filter(isInscritoAtivo);
-      const totalReal = ativos.length;
-      const confirmadosReal = ativos.filter(isConfirmado).length;
+      // Conta ingressos (soma de quantidade), não pedidos — mesmo critério
+      // do worker e do painel do evento (eventoInsights).
+      const qty = i => Number(i.quantidade) || 1;
+      const totalReal = ativos.reduce((s, i) => s + qty(i), 0);
+      const confirmadosReal = ativos.filter(isConfirmado).reduce((s, i) => s + qty(i), 0);
 
       const atual = eventoDoc.data();
       const totalSalvo = atual.totalInscritos || 0;

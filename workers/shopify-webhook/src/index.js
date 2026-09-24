@@ -368,15 +368,25 @@ async function getVariantInventory(variantId, accessToken) {
 // consumo de leitura do Firestore por pedido (estourou a cota do plano
 // gratuito numa loja ativa). O chamador já tem `existing` em mãos de
 // qualquer forma (precisa dele pra decidir patch vs set).
+//
+// Conta INGRESSOS (soma de `quantidade`), não pedidos — um pedido com
+// quantidade=2 vale 2, não 1. É o mesmo critério do painel do evento
+// (eventoInsights soma quantidade dos inscritos ativos); contar só
+// documentos fazia esse número divergir do "Ingressos vendidos" sempre
+// que alguém comprava mais de 1 ingresso no mesmo pedido.
 function isConfirmado(i) {
   return i?.status === 'Confirmado' || i?.status === 'Presente';
 }
-function deltaAgregados(existing, isActiveAfter, isConfirmadoAfter) {
-  const wasActive     = existing ? isInscritoAtivo(existing) : false;
-  const wasConfirmado = existing ? isConfirmado(existing) : false;
+function qtyOf(i) {
+  return Number(i?.quantidade) || 1;
+}
+function deltaAgregados(existing, isActiveAfter, isConfirmadoAfter, qtyAfter) {
+  const qtyBefore      = existing ? qtyOf(existing) : 0;
+  const wasActive      = existing ? isInscritoAtivo(existing) : false;
+  const wasConfirmado  = existing ? isConfirmado(existing) : false;
   return {
-    total:       (isActiveAfter ? 1 : 0) - (wasActive ? 1 : 0),
-    confirmados: (isConfirmadoAfter ? 1 : 0) - (wasConfirmado ? 1 : 0),
+    total:       (isActiveAfter ? qtyAfter : 0) - (wasActive ? qtyBefore : 0),
+    confirmados: (isConfirmadoAfter ? qtyAfter : 0) - (wasConfirmado ? qtyBefore : 0),
   };
 }
 
@@ -515,7 +525,7 @@ async function processOrder(db, order, financialStatus, env) {
     // deste worker) — aqui o status ou fica igual (patch sem tocar `status`)
     // ou é sobrescrito pro rótulo de inativo, nunca vira Confirmado/Presente.
     const isConfirmadoAfter = existing && isActive ? isConfirmado(existing) : false;
-    const delta = deltaAgregados(existing, isActive, isConfirmadoAfter);
+    const delta = deltaAgregados(existing, isActive, isConfirmadoAfter, fin.quantidade);
 
     if (existing) {
       const updateData = { ...base };
@@ -579,7 +589,7 @@ async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
       await db.patch(path, { financialStatus, status: statusLabel, updatedAt: now });
       console.log(`[updateInscritoFinancialStatus] ${inscritoId}: ${financialStatus} → "${statusLabel}"`);
       // fs não-pago aqui sempre → inativo, status sempre um rótulo inativo
-      const delta = deltaAgregados(existing, false, false);
+      const delta = deltaAgregados(existing, false, false, qtyOf(existing));
       await recalcEvento(db, productId, variantId, existing.variante || '', null, env, delta);
       await recalcCurso(db, productId);
     } else {
@@ -600,7 +610,7 @@ async function handleCancelled(db, order, env) {
     if (existing) {
       await db.patch(path, { status: 'Cancelado', financialStatus: 'cancelled', updatedAt: new Date() });
       console.log(`[webhook] Pedido cancelado: ${order.name}`);
-      const delta = deltaAgregados(existing, false, false);
+      const delta = deltaAgregados(existing, false, false, qtyOf(existing));
       await recalcEvento(db, productId, variantId, existing.variante || '', null, env, delta);
       await recalcCurso(db, productId);
     }
