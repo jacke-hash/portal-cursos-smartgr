@@ -522,16 +522,34 @@ h2 {
 .formation-list { display: grid; gap: 10px; }
 .formation-row { display: grid; grid-template-columns: minmax(88px, 1fr) minmax(60px, 1.4fr) minmax(58px, auto); align-items: center; gap: 10px; font-size: 12.5px; }
 .formation-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 600; }
-.formation-row b { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 12.5px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
+/* Número + chip de % alinhados em duas colunas fixas — sem isso, o par
+   "13 33%" fica solto e desalinhado entre linhas de tamanhos diferentes
+   (ex.: "4" vs "13" vs "100"), parecendo "grudado"/confuso de ler. */
+.formation-row b,
+.donut-legend-row b,
+.leader-row b,
+.audience-group-title b,
+.audience-group--flat b {
+  display: grid;
+  grid-template-columns: minmax(20px, auto) 42px;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 800;
+  text-align: right;
+}
+.stat-count { font-variant-numeric: tabular-nums; }
 .pct-chip {
   display: inline-block;
-  padding: 2px 6px;
+  width: 42px;
+  padding: 2px 0;
   border-radius: 20px;
   background: rgba(36, 83, 136, .09);
   color: var(--blue);
   font-size: 10px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+  text-align: center;
   white-space: nowrap;
 }
 .audience-group--muted .pct-chip { background: rgba(100, 112, 132, .12); color: var(--muted); }
@@ -568,7 +586,7 @@ h2 {
   background: var(--blue);
   transform: translateY(-50%);
 }
-.audience-group-title b { font-size: 13px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.audience-group-title b { font-size: 13px; color: var(--ink); }
 .audience-group-actions { display: flex; align-items: center; gap: 9px; }
 .chart-toggle-btn {
   display: grid;
@@ -584,18 +602,18 @@ h2 {
 .chart-toggle-btn:hover { background: rgba(36, 83, 136, .12); }
 .chart-toggle-btn:active { transform: scale(.92); }
 .audience-group--flat { display: flex; align-items: center; justify-content: space-between; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 700; color: var(--muted); }
-.audience-group--flat b { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.audience-group--flat b { font-size: 13px; color: var(--ink); }
 .audience-group--muted { opacity: .65; }
 .donut-wrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .donut-chart { flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%; box-shadow: inset 0 0 0 20px var(--white); }
 .donut-legend { display: grid; gap: 7px; flex: 1 1 140px; min-width: 0; }
 .donut-legend-row { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 8px; font-size: 11.5px; }
 .donut-legend-row > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 600; }
-.donut-legend-row b { display: flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; }
+.donut-legend-row b { font-size: 11.5px; }
 .donut-swatch { width: 9px; height: 9px; border-radius: 50%; }
 .leader-list { display: grid; gap: 12px; margin-top: 4px; }
 .leader-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.leader-row b { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: 0 0 auto; font-size: 12.5px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.leader-row b { margin-left: auto; flex: 0 0 auto; color: var(--ink); }
 .leader-name { overflow: hidden; font-size: 13.5px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .leader-mark { display: inline-grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 9px; background: #fff3cc; color: #8a5b00; font-size: 11px; font-weight: 800; }
 .leader-row:first-child .leader-mark { background: #fff3cc; color: #8a5b00; }
