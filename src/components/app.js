@@ -838,10 +838,17 @@ const AUDIENCE_PALETTE = ["#173f70", "#3b6ea5", "#5c7ca3", "#7fa0c9", "#9dc0dd",
 const _pctChip = (pct) => `<span class="pct-chip">${pct}%</span>`;
 const _statCount = (n) => `<span class="stat-count">${n}</span>`;
 
-function _donutChart(grupo) {
-  const top = grupo.slice(0, 6);
-  const restante = grupo.slice(6).reduce((soma, item) => soma + item.total, 0);
-  const items = restante > 0 ? [...top, { nome: "Outras", total: restante }] : top;
+// Igual _statList: mostra os top 6 por padrão, com "+N outras" pra ver tudo.
+// Nunca junta o resto num balde genérico sem dar a opção de abrir — dado
+// escondido de propósito é ruim pra decisão de negócio (ex.: 60% das
+// cidades somem num "Outras" só porque a lista era grande).
+function _donutChart(grupo, expanded, grupoKey) {
+  const LIMITE = 6;
+  const limite = expanded ? grupo.length : LIMITE;
+  const top = grupo.slice(0, limite);
+  const restanteQtd = grupo.length - top.length;
+  const restanteTotal = grupo.slice(limite).reduce((soma, item) => soma + item.total, 0);
+  const items = restanteTotal > 0 ? [...top, { nome: "Outras categorias", total: restanteTotal }] : top;
   const totalGeral = items.reduce((soma, item) => soma + item.total, 0) || 1;
 
   let acumulado = 0;
@@ -862,9 +869,15 @@ function _donutChart(grupo) {
     </div>`;
   }).join("");
 
-  return items.length
+  const corpo = items.length
     ? `<div class="donut-wrap"><div class="donut-chart" style="background: conic-gradient(${stops})"></div><div class="donut-legend">${legenda}</div></div>`
     : `<span class="event-empty-data">Sem dados</span>`;
+
+  const rodape = restanteQtd > 0
+    ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">+ ${restanteQtd} outras</button>`
+    : (expanded && grupo.length > LIMITE ? `<button type="button" class="event-more-data event-more-data--btn" data-action="toggle-audience-expand" data-group="${grupoKey}">ver menos</button>` : "");
+
+  return corpo + rodape;
 }
 
 // Painel genérico de estatística (lista com % + barra, ou rosca), reusado
@@ -877,7 +890,7 @@ function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4) {
   const view = state.statsView[grupoKey] || { chart: "bar", expanded: false };
   const outroModo = view.chart === "bar" ? "donut" : "bar";
   const localTotal = grupo.reduce((soma, item) => soma + item.total, 0);
-  const body = view.chart === "donut" ? _donutChart(grupo) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault);
+  const body = view.chart === "donut" ? _donutChart(grupo, view.expanded, grupoKey) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault);
   const headerPct = pctBase ? Math.round((localTotal / pctBase) * 100) : null;
   return `
     <div class="audience-group">
