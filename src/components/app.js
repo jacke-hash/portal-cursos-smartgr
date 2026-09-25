@@ -727,22 +727,26 @@ function cursoView() {
 }
 
 function eventoCard(evento) {
-  const evDate = extractEventDate(evento.data);
   // Usa o campo Firestore quando disponível; fallback para comparação de data
   const isPast = evento.encerrado === true || isEventoPast(evento);
-  const dateLabel = evDate
-    ? evDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
-    : "";
-  const statusBadge = evDate
-    ? `<span class="evento-status ${isPast ? "evento-status-encerrado" : "evento-status-ativo"}">${isPast ? "Encerrado" : "Ativo"}</span>`
+  const statusBadge = `<span class="evento-status ${isPast ? "evento-status-encerrado" : "evento-status-ativo"}">${isPast ? "Encerrado" : "Ativo"}</span>`;
+
+  // Vagas restantes no lugar da data — o título (varianteTitle) já tem a
+  // data embutida ("10/08/2026 – São Paulo..."), repeti-la numa linha
+  // abaixo era só redundância. Isso é dado novo de verdade.
+  const restante = evento.capacidadeDisponivel;
+  const capacidadeLine = typeof restante === "number"
+    ? `<span class="evento-vagas${restante <= 10 ? " evento-vagas--low" : ""}">${restante} vaga${restante !== 1 ? "s" : ""} restante${restante !== 1 ? "s" : ""}</span>`
     : "";
 
   return `
     <button class="evento-card${isPast ? " evento-past" : ""}"
             data-action="open-evento" data-evento-id="${evento.id}">
-      <strong>${evento.varianteTitle || evento.id}</strong>
-      ${dateLabel ? `<span class="evento-date">${dateLabel}</span>` : ""}
-      ${statusBadge}
+      <div class="evento-card-top">
+        <strong>${evento.varianteTitle || evento.id}</strong>
+        ${statusBadge}
+      </div>
+      ${capacidadeLine}
       <div class="card-meta">
         <span><b>${evento.totalInscritos || 0}</b> inscritos</span>
         <span><b data-confirmados-for="${evento.id}">${_confirmadosCache.has(evento.id) ? _confirmadosCache.get(evento.id) : "…"}</b> confirmados</span>
