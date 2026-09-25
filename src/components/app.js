@@ -504,7 +504,10 @@ function cursosView() {
         <p class="eyebrow">Portal operacional</p>
         <h1>RELAÇÃO DE INSCRITOS</h1>
       </div>
-      <input class="search" data-action="search-cursos" placeholder="Buscar curso..." value="${state.search}">
+      <div class="filter-wrap filter-wrap--grow">
+        <span class="filter-icon">${icon.search()}</span>
+        <input class="search" data-action="search-cursos" placeholder="Buscar curso..." value="${state.search}">
+      </div>
     </section>
     <div class="cursos-filtros-row" id="cursos-filtros-row">
       ${cursosFiltrosRow()}
@@ -532,7 +535,7 @@ function cursosFiltrosRow() {
         <option value="updatedAt" ${state.cursoSortKey === "updatedAt" ? "selected" : ""}>Última atualização</option>
       </select>
       <button class="btn-toggle-past btn-toggle-past--icon" data-action="toggle-curso-sort-dir" title="Inverter ordem">
-        ${state.cursoSortDir === "asc" ? "↑" : "↓"}
+        ${state.cursoSortDir === "asc" ? icon.arrowUp() : icon.arrowDown()}
       </button>
     </div>
   `;
@@ -857,10 +860,7 @@ const AUDIENCE_PALETTE = ["#173f70", "#3b6ea5", "#5c7ca3", "#7fa0c9", "#9dc0dd",
 const _pctChip = (pct) => `<span class="pct-chip">${pct}%</span>`;
 const _statCount = (n) => `<span class="stat-count">${n}</span>`;
 
-// Igual _statList: mostra os top 6 por padrão, com "+N outras" pra ver tudo.
-// Nunca junta o resto num balde genérico sem dar a opção de abrir — dado
-// escondido de propósito é ruim pra decisão de negócio (ex.: 60% das
-// cidades somem num "Outras" só porque a lista era grande).
+
 function _donutChart(grupo, expanded, grupoKey) {
   const LIMITE = 6;
   const limite = expanded ? grupo.length : LIMITE;

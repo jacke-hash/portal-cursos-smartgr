@@ -58,4 +58,10 @@ export const icon = {
 
   square: (n = 13) =>
     sq(n, `<rect width="18" height="18" x="3" y="3" rx="3"/>`),
+
+  arrowUp: (n = 14) =>
+    sq(n, `<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>`),
+
+  arrowDown: (n = 14) =>
+    sq(n, `<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>`),
 };

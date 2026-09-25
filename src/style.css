@@ -190,8 +190,8 @@ h2 {
   letter-spacing: .04em;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #f1f5f9;
-  color: #64748b;
+  background: var(--soft);
+  color: var(--muted);
 }
 
 /* ── MENU DO CARD DE CURSO (⋮) ── */
@@ -268,8 +268,10 @@ h2 {
   margin-left: auto;
 }
 .btn-toggle-past--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 14px;
-  font-size: 15px;
 }
 
 .course-card-body {
