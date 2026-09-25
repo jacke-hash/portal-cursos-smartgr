@@ -777,7 +777,9 @@ function eventoCard(evento) {
   // abaixo era só redundância. Isso é dado novo de verdade.
   const restante = evento.capacidadeDisponivel;
   const capacidadeLine = typeof restante === "number"
-    ? `<span class="evento-vagas${restante <= 10 ? " evento-vagas--low" : ""}">${restante} vaga${restante !== 1 ? "s" : ""} restante${restante !== 1 ? "s" : ""}</span>`
+    ? restante === 0
+      ? `<span class="evento-vagas evento-vagas--esgotado">Esgotado</span>`
+      : `<span class="evento-vagas${restante <= 10 ? " evento-vagas--low" : ""}">${restante} vaga${restante !== 1 ? "s" : ""} restante${restante !== 1 ? "s" : ""}</span>`
     : "";
 
   return `

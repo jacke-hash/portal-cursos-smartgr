@@ -472,6 +472,16 @@ h2 {
   color: var(--blue);
 }
 .evento-vagas--low { color: #b45309; }
+.evento-vagas--esgotado {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: #fee2e2;
+  color: #b91c1c;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: 10px;
+}
 
 /* Badge de status (Ativo / Encerrado) */
 .evento-status {
