@@ -494,7 +494,19 @@ function courseGridContent() {
   // em vez de "nenhum curso encontrado" — evita o flash de vazio ao recarregar (F5)
   if (!state.cursosLoaded) return loading("Carregando cursos...");
   const filtered = filteredCursos();
-  return filtered.length ? filtered.map(courseCard).join("") : empty("Nenhum curso encontrado.");
+  const body = filtered.length ? filtered.map(courseCard).join("") : empty("Nenhum curso encontrado.");
+  // Vive dentro do #course-grid de propósito — assim atualiza sozinho em todo
+  // lugar que já atualiza os cards (F5, filtro, snapshot novo), sem precisar
+  // repetir a mesma leitura de state.cursos nos ~7 pontos que fazem
+  // `grid.innerHTML = courseGridContent()`.
+  const totalInscritosGeral = state.cursos.reduce((s, c) => s + (c.totalInscritos || 0), 0);
+  const resumo = `
+    <p class="cursos-summary">
+      <strong>${state.cursos.length}</strong> curso${state.cursos.length !== 1 ? "s" : ""} ativo${state.cursos.length !== 1 ? "s" : ""}
+      <span class="cursos-summary-dot"></span>
+      <strong>${totalInscritosGeral.toLocaleString("pt-BR")}</strong> inscrito${totalInscritosGeral !== 1 ? "s" : ""} no total
+    </p>`;
+  return resumo + body;
 }
 
 function cursosView() {
