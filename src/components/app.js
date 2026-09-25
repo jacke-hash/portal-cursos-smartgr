@@ -223,6 +223,7 @@ let state = {
   // (pizza) por padrão — usuário pode trocar pra barras pelo ícone.
   statsView: {
     profissional: { chart: "donut", expanded: false },
+    prescritores: { chart: "donut", expanded: false },
     estudante:    { chart: "donut", expanded: false },
     publico:      { chart: "donut", expanded: false },
     vendedores:   { chart: "donut", expanded: false },
@@ -836,6 +837,11 @@ const FORMACAO_LABELS = {
   fisioterapia: "Fisioterapia", medicina: "Medicina", nutricao: "Nutrição",
   outras: "Outras", outros: "Outros",
 };
+// Subconjunto de profissionais habilitados a prescrever — recorte de
+// negócio pedido à parte da lista geral de profissões (mesmas chaves cruas
+// usadas em `formacao`, antes da humanização).
+const PRESCRITORES_KEYS = new Set(["biomedico", "enfermeiro", "dentista", "medico", "farmaceutico"]);
+
 function _humanizeFormacao(raw) {
   const key = String(raw || "").trim().toLowerCase();
   if (FORMACAO_LABELS[key]) return FORMACAO_LABELS[key];
@@ -882,6 +888,9 @@ function eventoInsights() {
   const estudantes    = ativos.filter((i) => i.perfil === "estudante");
   const consumidores  = ativos.filter((i) => i.perfil === "consumidor");
   const semPerfil     = ativos.filter((i) => !["profissional", "estudante", "consumidor"].includes(i.perfil));
+  // Recorte dos profissionais habilitados a prescrever (Biomédico, Enfermeiro,
+  // Dentista, Médico, Farmacêutico) — mesmo universo de "profissionais", só filtrado.
+  const prescritores  = profissionais.filter((i) => PRESCRITORES_KEYS.has(String(i.formacao || "").trim().toLowerCase()));
 
   const vendedores = agrupar(ativos, "vendedor", "Venda direta");
   const estados = agrupar(ativos, "estado", "Não informado");
@@ -892,6 +901,7 @@ function eventoInsights() {
     estudante:    somaQuantidade(estudantes),
     consumidor:   somaQuantidade(consumidores),
     semPerfil:    somaQuantidade(semPerfil),
+    prescritor:   somaQuantidade(prescritores),
   };
   const publicoOverview = [
     { nome: "Profissional", total: publicoTotais.profissional },
@@ -904,6 +914,7 @@ function eventoInsights() {
     ingressos: somaQuantidade(ativos),
     publico: {
       profissional: { total: publicoTotais.profissional, formacoes: agruparFormacao(profissionais, "Não informada") },
+      prescritores: { total: publicoTotais.prescritor, formacoes: agruparFormacao(prescritores, "Não informada") },
       estudante:    { total: publicoTotais.estudante, formacoes: agruparFormacao(estudantes, "Não informada") },
       consumidor:   { total: publicoTotais.consumidor },
       semPerfil:    { total: publicoTotais.semPerfil },
@@ -1054,7 +1065,7 @@ function eventoDashboardContent(stats) {
 
 function eventoAnalyticsContent() {
   const insights = eventoInsights();
-  const { profissional, estudante, consumidor, semPerfil } = insights.publico;
+  const { profissional, estudante, consumidor, semPerfil, prescritores } = insights.publico;
   const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
   const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
   return `
@@ -1069,6 +1080,10 @@ function eventoAnalyticsContent() {
         ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
         <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
         ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
+      </article>
+      <article class="analytics-panel">
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">Biomédico · Enfermeiro · Dentista · Médico · Farmacêutico</span></div>
+        ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5)}
       </article>
       <article class="analytics-panel">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Região</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
@@ -2001,6 +2016,7 @@ function openEvento(eventoId) {
   state.page = 1;
   state.statsView = {
     profissional: { chart: "donut", expanded: false },
+    prescritores: { chart: "donut", expanded: false },
     estudante:    { chart: "donut", expanded: false },
     publico:      { chart: "donut", expanded: false },
     vendedores:   { chart: "donut", expanded: false },

@@ -754,7 +754,9 @@ h2 {
 }
 .event-analytics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* auto-fit (não repeat(N) fixo) — painel novo pode entrar/sair sem
+     deixar uma coluna vazia sobrando quando não fecha a última linha. */
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 16px;
   margin-bottom: 26px;
 }
