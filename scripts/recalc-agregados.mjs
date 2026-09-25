@@ -82,10 +82,35 @@ async function main() {
       const totalSalvo = atual.totalInscritos || 0;
       const confirmadosSalvo = atual.confirmados || 0;
 
-      if (totalSalvo === totalReal && confirmadosSalvo === confirmadosReal) continue;
+      // ativo/encerrado só são recalculados quando um pedido novo mexe no
+      // evento (worker) ou quando alguém roda sync-shopify.mjs manualmente
+      // — um evento com data já passada e sem pedido recente ficava com
+      // ativo:true desatualizado pra sempre, aparecendo na tela como
+      // "futuro" mesmo com o badge já mostrando "Encerrado" (calculado à
+      // parte, pela data). Só corrige nessa direção (ativo→encerrado quando
+      // a data já passou); nunca reativa um evento já marcado inativo —
+      // sync-shopify.mjs também desativa eventos removidos da Shopify
+      // (órfãos) por outro motivo além da data, e mexer nisso aqui poderia
+      // reverter essa desativação por engano.
+      const evDate = atual.data?.toDate?.() || null;
+      let ativoCorreto = atual.ativo;
+      let encerradoCorreto = atual.encerrado;
+      if (evDate && atual.ativo === true) {
+        const hoje = new Date();
+        const evDay   = new Date(evDate.getFullYear(), evDate.getMonth(), evDate.getDate());
+        const hojeDay = new Date(hoje.getFullYear(),  hoje.getMonth(),  hoje.getDate());
+        if (evDay <= hojeDay) { ativoCorreto = false; encerradoCorreto = true; }
+      }
 
-      await eventoDoc.ref.set({ totalInscritos: totalReal, confirmados: confirmadosReal, updatedAt: Timestamp.now() }, { merge: true });
-      console.log(`  ${nome} / ${atual.varianteTitle || eventoDoc.id}: totalInscritos ${totalSalvo}→${totalReal} | confirmados ${confirmadosSalvo}→${confirmadosReal}`);
+      const precisaAtualizarStatus = ativoCorreto !== atual.ativo || encerradoCorreto !== atual.encerrado;
+      if (totalSalvo === totalReal && confirmadosSalvo === confirmadosReal && !precisaAtualizarStatus) continue;
+
+      const patch = { totalInscritos: totalReal, confirmados: confirmadosReal, updatedAt: Timestamp.now() };
+      if (precisaAtualizarStatus) { patch.ativo = ativoCorreto; patch.encerrado = encerradoCorreto; }
+
+      await eventoDoc.ref.set(patch, { merge: true });
+      const statusMsg = precisaAtualizarStatus ? ` | ativo ${atual.ativo}→${ativoCorreto}, encerrado ${atual.encerrado}→${encerradoCorreto}` : '';
+      console.log(`  ${nome} / ${atual.varianteTitle || eventoDoc.id}: totalInscritos ${totalSalvo}→${totalReal} | confirmados ${confirmadosSalvo}→${confirmadosReal}${statusMsg}`);
       corrigidos++;
     }
   }

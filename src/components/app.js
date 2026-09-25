@@ -625,8 +625,27 @@ function dedupeEventos(eventos) {
 function computeEventoSections() {
   // state.eventos   = ativo: true  (futuros) — já ordenados por data asc pelo Firestore
   // state.encerrados = encerrado: true (passados) — ordenados por data desc (client-side)
-  const future = dedupeEventos(state.eventos);
-  const past   = dedupeEventos(state.encerrados);
+  const rawFuture = dedupeEventos(state.eventos);
+  const rawPast   = dedupeEventos(state.encerrados);
+
+  // O campo ativo/encerrado no Firestore só é recalculado quando um pedido
+  // novo mexe naquele evento — um evento com data já passada mas sem pedido
+  // recente fica com ativo:true desatualizado e aparecia direto em
+  // "futuros" mesmo encerrado (o badge do card já calculava certo pela
+  // data, só o agrupamento/toggle que confiava cegamente no campo velho).
+  // Reclassifica aqui pela data real, sem depender do sync ter rodado.
+  const staleEncerrados = [];
+  const future = rawFuture.filter((ev) => {
+    if (isEventoPast(ev)) { staleEncerrados.push(ev); return false; }
+    return true;
+  });
+  const past = staleEncerrados.length
+    ? [...rawPast, ...staleEncerrados].sort((a, b) => {
+        const da = extractEventDate(a.data)?.getTime() ?? 0;
+        const db = extractEventDate(b.data)?.getTime() ?? 0;
+        return db - da;
+      })
+    : rawPast;
 
   const q = normalize(state.eventoSearch.trim());
   const applySearch = list => q
