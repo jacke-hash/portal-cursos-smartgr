@@ -757,6 +757,10 @@ h2 {
   /* auto-fit (não repeat(N) fixo) — painel novo pode entrar/sair sem
      deixar uma coluna vazia sobrando quando não fecha a última linha. */
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  /* Sem isso, grid estica todo painel pra altura do mais alto da linha —
+     um painel curto (poucas linhas de conteúdo, ex. Prescritores) virava
+     uma caixa branca vazia até a altura do painel mais cheio ao lado. */
+  align-items: start;
   gap: 16px;
   margin-bottom: 26px;
 }

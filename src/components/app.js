@@ -1082,7 +1082,7 @@ function eventoAnalyticsContent() {
         ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
       </article>
       <article class="analytics-panel">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">Biomédico · Enfermeiro · Dentista · Médico · Farmacêutico</span></div>
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
         ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5)}
       </article>
       <article class="analytics-panel">
