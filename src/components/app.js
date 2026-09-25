@@ -695,6 +695,34 @@ function eventoGridContent(sections) {
   return html;
 }
 
+// Card "Eventos encerrados" funciona como atalho pro mesmo toggle do botão
+// na toolbar (data-action idêntico — os dois disparam a mesma ação) quando
+// existe algo pra mostrar; senão vira um statCard comum, não clicável.
+function cursoStatsBarContent(futureCount, pastCount, sempreExibirEncerrados) {
+  const encerradosCard = pastCount > 0 && !sempreExibirEncerrados
+    ? `<button type="button" class="stat-card stat-card--clickable${state.showPastEventos ? " stat-card--active" : ""}" data-action="toggle-past-eventos" title="${state.showPastEventos ? "Ocultar eventos encerrados" : "Mostrar eventos encerrados"}">
+         <b class="stat-value">${pastCount}</b>
+         <span class="stat-label">Eventos encerrados</span>
+       </button>`
+    : statCard("Eventos encerrados", pastCount);
+  return statCard("Eventos futuros", futureCount) + encerradosCard;
+}
+
+function cursoToolbarContent(pastCount, sempreExibirEncerrados) {
+  return `
+    <div class="filter-wrap filter-wrap--grow">
+      <span class="filter-icon">${icon.search()}</span>
+      <input class="search" data-action="search-evento"
+             placeholder="Buscar evento..." value="${state.eventoSearch}">
+    </div>
+    ${pastCount > 0 && !sempreExibirEncerrados ? `
+      <button class="btn-toggle-past ${state.showPastEventos ? "active" : ""}"
+              data-action="toggle-past-eventos">
+        ${state.showPastEventos ? "Ocultar eventos encerrados" : `Mostrar encerrados (${pastCount})`}
+      </button>` : ""}
+  `;
+}
+
 function cursoView() {
   if (!state.curso) return empty("Curso não encontrado.");
   const sections = computeEventoSections();
@@ -708,17 +736,10 @@ function cursoView() {
       </div>
     </section>
     <div class="stats-bar" id="curso-stats-bar">
-      ${statCard("Eventos futuros", futureCount)}
-      ${statCard("Eventos encerrados", pastCount)}
+      ${cursoStatsBarContent(futureCount, pastCount, sempreExibirEncerrados)}
     </div>
-    <div class="eventos-toolbar">
-      <input class="search" data-action="search-evento"
-             placeholder="Buscar evento..." value="${state.eventoSearch}">
-      ${pastCount > 0 && !sempreExibirEncerrados ? `
-        <button class="btn-toggle-past ${state.showPastEventos ? "active" : ""}"
-                data-action="toggle-past-eventos">
-          ${state.showPastEventos ? "Ocultar eventos encerrados" : `Mostrar encerrados (${pastCount})`}
-        </button>` : ""}
+    <div class="eventos-toolbar" id="eventos-toolbar">
+      ${cursoToolbarContent(pastCount, sempreExibirEncerrados)}
     </div>
     <section class="eventos-grid" id="eventos-content">
       ${eventoGridContent(sections)}
@@ -743,7 +764,7 @@ function eventoCard(evento) {
     <button class="evento-card${isPast ? " evento-past" : ""}"
             data-action="open-evento" data-evento-id="${evento.id}">
       <div class="evento-card-top">
-        <strong>${evento.varianteTitle || evento.id}</strong>
+        <strong title="${evento.varianteTitle || evento.id}">${evento.varianteTitle || evento.id}</strong>
         ${statusBadge}
       </div>
       ${capacidadeLine}
@@ -1589,26 +1610,20 @@ function cursoEventosPartialUpdate() {
   const { pastCount, futureCount, sempreExibirEncerrados } = sections;
 
   const statsBar    = root.querySelector("#curso-stats-bar");
+  const toolbar     = root.querySelector("#eventos-toolbar");
   const eventosGrid = root.querySelector("#eventos-content");
-  const toggleBtn   = root.querySelector("[data-action='toggle-past-eventos']");
 
-  if (statsBar) statsBar.innerHTML =
-    statCard("Eventos futuros", futureCount) +
-    statCard("Eventos encerrados", pastCount);
+  // Reconstrói os dois inteiros (não mutação pontual) — o card "Eventos
+  // encerrados" e o botão da toolbar compartilham o mesmo data-action
+  // (toggle-past-eventos), então mirar um seletor genérico pra atualizar só
+  // um dos dois pegava o elemento errado. innerHTML nos dois de uma vez
+  // também cobre sozinho o caso do toggle aparecer/sumir quando pastCount
+  // vira 0/>0, sem precisar de um render() cheio à parte pra isso.
+  if (statsBar) statsBar.innerHTML = cursoStatsBarContent(futureCount, pastCount, sempreExibirEncerrados);
+  if (toolbar)  toolbar.innerHTML  = cursoToolbarContent(pastCount, sempreExibirEncerrados);
 
   if (eventosGrid) eventosGrid.innerHTML = eventoGridContent(sections);
   hydrateConfirmados(visibleEventosParaConfirmados(sections));
-
-  if (toggleBtn) {
-    toggleBtn.className = `btn-toggle-past${state.showPastEventos ? " active" : ""}`;
-    toggleBtn.textContent = state.showPastEventos
-      ? "Ocultar eventos encerrados"
-      : `Mostrar encerrados (${pastCount})`;
-  }
-
-  // pastCount surgiu (primeiro evento encerrado adicionado): re-renderiza para mostrar o toggle
-  // — exceto quando sempreExibirEncerrados, caso em que o toggle nunca é renderizado de propósito.
-  if (pastCount > 0 && !toggleBtn && !sempreExibirEncerrados) render();
 }
 
 // ─── EVENTOS ─────────────────────────────────────────────────────────────────
