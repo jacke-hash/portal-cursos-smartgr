@@ -304,26 +304,28 @@ function extractFormacaoInfo(attributes) {
   const perfil = norm(valor('perfil_cliente'));
 
   if (perfil === 'profissional') {
-    return { perfil: 'profissional', formacao: valor('profissao_cliente') };
+    // Só médico/dentista têm especialidade_cliente na Shopify — as demais
+    // profissões nunca preenchem esse campo, então fica vazio pra elas.
+    return { perfil: 'profissional', formacao: valor('profissao_cliente'), especialidade: valor('especialidade_cliente') };
   }
   if (perfil === 'estudante') {
     const area = valor('area_estudo_cliente');
-    return { perfil: 'estudante', formacao: area === '-' ? '' : area };
+    return { perfil: 'estudante', formacao: area === '-' ? '' : area, especialidade: '' };
   }
   if (perfil === 'consumidor' || perfil === 'consumidor_final' || perfil === 'consumidor final') {
-    return { perfil: 'consumidor', formacao: '' };
+    return { perfil: 'consumidor', formacao: '', especialidade: '' };
   }
 
   const legado = attributes.find(({ name }) =>
     ['formacao', 'formação', 'profissao', 'profissão', 'profissao_cliente', 'area de atuacao', 'área de atuação', 'ocupacao', 'ocupação']
       .includes(norm(name))
   )?.value || '';
-  return { perfil: '', formacao: legado };
+  return { perfil: '', formacao: legado, especialidade: '' };
 }
 
 function extractCustomer(order) {
   const attributes = order.note_attributes || [];
-  const { perfil, formacao } = extractFormacaoInfo(attributes);
+  const { perfil, formacao, especialidade } = extractFormacaoInfo(attributes);
   return {
     cliente: [
       order.billing_address?.first_name || order.customer?.first_name || '',
@@ -337,6 +339,7 @@ function extractCustomer(order) {
     vendedor: attributes.find(a => a.name === 'Affiliate')?.value || '',
     perfil,
     formacao,
+    especialidade,
   };
 }
 

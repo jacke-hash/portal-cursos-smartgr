@@ -222,8 +222,8 @@ let state = {
   // gráfico (bar/donut) e expansão da lista, por grupo. Começa em "donut"
   // (pizza) por padrão — usuário pode trocar pra barras pelo ícone.
   statsView: {
-    profissional: { chart: "donut", expanded: false },
-    prescritores: { chart: "donut", expanded: false },
+    profissional: { chart: "donut", expanded: false, expandedSub: new Set() },
+    prescritores: { chart: "donut", expanded: false, expandedSub: new Set() },
     estudante:    { chart: "donut", expanded: false },
     publico:      { chart: "donut", expanded: false },
     vendedores:   { chart: "donut", expanded: false },
@@ -892,6 +892,19 @@ function eventoInsights() {
   // Dentista, Médico, Farmacêutico) — mesmo universo de "profissionais", só filtrado.
   const prescritores  = profissionais.filter((i) => PRESCRITORES_KEYS.has(String(i.formacao || "").trim().toLowerCase()));
 
+  // Especialidade dentro de cada profissão (só médico/dentista têm esse dado
+  // na Shopify — as demais nunca preenchem, então nunca aparecem aqui).
+  // Mapa: nome humanizado da profissão -> lista de especialidades agrupadas.
+  const especialidadesPorProfissao = {};
+  profissionais.forEach((i) => {
+    if (!i.especialidade) return;
+    const profissaoNome = _humanizeFormacao(i.formacao);
+    (especialidadesPorProfissao[profissaoNome] ||= []).push(i);
+  });
+  Object.keys(especialidadesPorProfissao).forEach((profissaoNome) => {
+    especialidadesPorProfissao[profissaoNome] = agrupar(especialidadesPorProfissao[profissaoNome], "especialidade", "Não informada");
+  });
+
   const vendedores = agrupar(ativos, "vendedor", "Venda direta");
   const estados = agrupar(ativos, "estado", "Não informado");
   const cidades = agrupar(ativos, "cidade", "Não informado");
@@ -919,6 +932,7 @@ function eventoInsights() {
       consumidor:   { total: publicoTotais.consumidor },
       semPerfil:    { total: publicoTotais.semPerfil },
       overview:     publicoOverview,
+      especialidades: especialidadesPorProfissao,
     },
     vendedores,
     regiao: { estados, cidades },
@@ -975,11 +989,15 @@ function _donutChart(grupo, expanded, grupoKey) {
 // total geral (ex.: profissionais são 40% de todos os ingressos); sem ele,
 // o cabeçalho mostra só a contagem — usado quando o grupo já cobre 100% do
 // evento (vendedores, região, visão geral de público).
-function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4) {
-  const view = state.statsView[grupoKey] || { chart: "bar", expanded: false };
+// `subBreakdown`, quando informado, é um mapa nome-da-linha -> lista de
+// subitens (ex.: "Médico" -> especialidades) — só usado no modo lista (a
+// rosca não representa hierarquia); linhas sem entrada nesse mapa ficam
+// como texto simples, sem seta de expandir.
+function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4, subBreakdown = null) {
+  const view = state.statsView[grupoKey] || { chart: "bar", expanded: false, expandedSub: new Set() };
   const outroModo = view.chart === "bar" ? "donut" : "bar";
   const localTotal = grupo.reduce((soma, item) => soma + item.total, 0);
-  const body = view.chart === "donut" ? _donutChart(grupo, view.expanded, grupoKey) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault);
+  const body = view.chart === "donut" ? _donutChart(grupo, view.expanded, grupoKey) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault, subBreakdown, view.expandedSub);
   const headerPct = pctBase ? Math.round((localTotal / pctBase) * 100) : null;
   return `
     <div class="audience-group">
@@ -994,14 +1012,29 @@ function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4) {
     </div>`;
 }
 
-function _statList(grupo, expanded, grupoKey, localTotal, limitDefault) {
+function _statList(grupo, expanded, grupoKey, localTotal, limitDefault, subBreakdown, expandedSub) {
   const max = grupo[0]?.total || 1;
   const limite = expanded ? grupo.length : limitDefault;
   const topo = grupo.slice(0, limite);
   const outras = Math.max(0, grupo.length - topo.length);
   const row = (item) => {
     const pct = localTotal ? Math.round((item.total / localTotal) * 100) : 0;
-    return `<div class="formation-row"><span title="${item.nome}">${item.nome}</span><div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${_statCount(item.total)}${_pctChip(pct)}</b></div>`;
+    const sub = subBreakdown?.[item.nome];
+    const expandable = !!sub && sub.length > 0;
+    const aberta = expandable && expandedSub?.has(item.nome);
+    const nomeCell = expandable
+      ? `<button type="button" class="formation-name formation-name--expandable" data-action="toggle-audience-subrow" data-group="${grupoKey}" data-row="${item.nome}" title="${item.nome} — clique pra ver especialidades">
+           <span class="formation-chevron${aberta ? " formation-chevron--open" : ""}">${icon.chevronLeft(9)}</span>${item.nome}
+         </button>`
+      : `<span class="formation-name" title="${item.nome}">${item.nome}</span>`;
+    const linhaPrincipal = `<div class="formation-row">${nomeCell}<div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${_statCount(item.total)}${_pctChip(pct)}</b></div>`;
+    const subLista = aberta
+      ? `<div class="formation-sublist">${sub.map((s) => {
+          const subPct = item.total ? Math.round((s.total / item.total) * 100) : 0;
+          return `<div class="formation-subrow"><span title="${s.nome}">${s.nome}</span><b>${_statCount(s.total)}${_pctChip(subPct)}</b></div>`;
+        }).join("")}</div>`
+      : "";
+    return linhaPrincipal + subLista;
   };
   return `
     <div class="formation-list">${topo.map(row).join("") || `<span class="event-empty-data">Sem dados</span>`}</div>
@@ -1065,7 +1098,7 @@ function eventoDashboardContent(stats) {
 
 function eventoAnalyticsContent() {
   const insights = eventoInsights();
-  const { profissional, estudante, consumidor, semPerfil, prescritores } = insights.publico;
+  const { profissional, estudante, consumidor, semPerfil, prescritores, especialidades } = insights.publico;
   const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
   const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
   return `
@@ -1077,12 +1110,12 @@ function eventoAnalyticsContent() {
         </article>
         <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-          ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5)}
+          ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5, especialidades)}
         </article>
       </div>
       <article class="analytics-panel">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos)}
+        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos, 4, especialidades)}
         ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
         <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
         ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
@@ -1710,6 +1743,14 @@ function handleClick(e) {
       state.statsView[key] = state.statsView[key] || { chart: "bar", expanded: false };
       state.statsView[key].chart = state.statsView[key].chart === "bar" ? "donut" : "bar";
       refreshEventStatsPanels();
+    } else if (action === "toggle-audience-subrow") {
+      const key = el.dataset.group;
+      const row = el.dataset.row;
+      state.statsView[key] = state.statsView[key] || { chart: "bar", expanded: false, expandedSub: new Set() };
+      if (!state.statsView[key].expandedSub) state.statsView[key].expandedSub = new Set();
+      const expandedSub = state.statsView[key].expandedSub;
+      if (expandedSub.has(row)) expandedSub.delete(row); else expandedSub.add(row);
+      refreshEventStatsPanels();
 
     // ── Status do curso (arquivamento/ocultação) ───────────────────────────────
     } else if (action === "curso-ocultar") {
@@ -2017,8 +2058,8 @@ function openEvento(eventoId) {
   state.filters = { ...DEFAULT_INSCRITO_FILTERS };
   state.page = 1;
   state.statsView = {
-    profissional: { chart: "donut", expanded: false },
-    prescritores: { chart: "donut", expanded: false },
+    profissional: { chart: "donut", expanded: false, expandedSub: new Set() },
+    prescritores: { chart: "donut", expanded: false, expandedSub: new Set() },
     estudante:    { chart: "donut", expanded: false },
     publico:      { chart: "donut", expanded: false },
     vendedores:   { chart: "donut", expanded: false },

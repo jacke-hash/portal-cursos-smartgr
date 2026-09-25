@@ -628,7 +628,41 @@ h2 {
 .event-panel-caption { padding-top: 2px; }
 .formation-list { display: grid; gap: 10px; }
 .formation-row { display: grid; grid-template-columns: minmax(88px, 1fr) minmax(60px, 1.4fr) minmax(58px, auto); align-items: center; gap: 10px; font-size: 12.5px; }
-.formation-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 600; }
+.formation-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 600; }
+/* Linha com especialidade (só Médico/Dentista) vira botão — some com a
+   moldura padrão de <button> e ganha a setinha que indica que dá pra abrir. */
+.formation-name--expandable {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--blue);
+}
+.formation-name--expandable:hover { text-decoration: underline; }
+.formation-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--muted);
+  transform: rotate(180deg);
+  transition: transform .15s;
+}
+.formation-chevron--open { transform: rotate(270deg); }
+.formation-sublist { display: grid; gap: 6px; padding: 8px 0 2px 18px; }
+.formation-subrow {
+  display: grid;
+  grid-template-columns: 1fr minmax(58px, auto);
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.formation-subrow > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.formation-subrow b { display: grid; grid-template-columns: minmax(16px, auto) 42px; align-items: center; gap: 7px; font-weight: 700; color: var(--ink); text-align: right; }
 /* Número + chip de % alinhados em duas colunas fixas — sem isso, o par
    "13 33%" fica solto e desalinhado entre linhas de tamanhos diferentes
    (ex.: "4" vs "13" vs "100"), parecendo "grudado"/confuso de ler. */
@@ -746,7 +780,7 @@ h2 {
     grid-template-areas: "name value" "track track";
     row-gap: 6px;
   }
-  .formation-row > span { grid-area: name; }
+  .formation-name { grid-area: name; }
   .formation-row b { grid-area: value; }
   .formation-track { grid-area: track; }
   .donut-chart { width: 72px; height: 72px; }
