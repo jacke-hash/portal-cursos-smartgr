@@ -1070,20 +1070,22 @@ function eventoAnalyticsContent() {
   const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
   return `
     <section class="event-analytics" aria-label="Analytics do evento">
-      <article class="analytics-panel">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Vendedores</span><strong>${insights.vendedores.length} vendedor${insights.vendedores.length !== 1 ? "es" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6)}
-      </article>
+      <div class="analytics-col">
+        <article class="analytics-panel">
+          <div class="event-panel-heading"><div><span class="event-kpi-label">Vendedores</span><strong>${insights.vendedores.length} vendedor${insights.vendedores.length !== 1 ? "es" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+          ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6)}
+        </article>
+        <article class="analytics-panel">
+          <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+          ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5)}
+        </article>
+      </div>
       <article class="analytics-panel">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
         ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos)}
         ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
         <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
         ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
-      </article>
-      <article class="analytics-panel">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5)}
       </article>
       <article class="analytics-panel">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Região</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>

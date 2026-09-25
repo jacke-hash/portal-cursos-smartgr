@@ -764,6 +764,13 @@ h2 {
   gap: 16px;
   margin-bottom: 26px;
 }
+/* Agrupa Vendedores + Prescritores como 1 item só do grid (1 coluna),
+   em vez de cada um virar sua própria coluna. */
+.analytics-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 .analytics-panel {
   padding: 23px 25px;
   background: var(--white);
