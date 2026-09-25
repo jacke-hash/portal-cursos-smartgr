@@ -701,11 +701,12 @@ function eventoGridContent(sections) {
 function cursoStatsBarContent(futureCount, pastCount, sempreExibirEncerrados) {
   const encerradosCard = pastCount > 0 && !sempreExibirEncerrados
     ? `<button type="button" class="stat-card stat-card--clickable${state.showPastEventos ? " stat-card--active" : ""}" data-action="toggle-past-eventos" title="${state.showPastEventos ? "Ocultar eventos encerrados" : "Mostrar eventos encerrados"}">
+         <div class="stat-icon">${icon.checkCircle()}</div>
          <b class="stat-value">${pastCount}</b>
          <span class="stat-label">Eventos encerrados</span>
        </button>`
-    : statCard("Eventos encerrados", pastCount);
-  return statCard("Eventos futuros", futureCount) + encerradosCard;
+    : statCard("Eventos encerrados", pastCount, "", icon.checkCircle());
+  return statCard("Eventos futuros", futureCount, "", icon.clock3()) + encerradosCard;
 }
 
 function cursoToolbarContent(pastCount, sempreExibirEncerrados) {
@@ -731,7 +732,7 @@ function cursoView() {
   return `
     <section class="page-head">
       <div>
-        <button class="back-btn" data-action="go-cursos">← Cursos</button>
+        <button class="back-btn" data-action="go-cursos">${icon.chevronLeft(12)} Cursos</button>
         <h2>${state.curso.nome}</h2>
       </div>
     </section>
@@ -1164,7 +1165,7 @@ function eventoView() {
   return `
     <section class="page-head">
       <div class="page-head-left">
-        <button class="back-btn" data-action="go-curso">← ${state.curso?.nome || "Curso"}</button>
+        <button class="back-btn" data-action="go-curso">${icon.chevronLeft(12)} ${state.curso?.nome || "Curso"}</button>
         <h2>${state.evento.varianteTitle || state.evento.id}</h2>
       </div>
       <div class="page-head-right">

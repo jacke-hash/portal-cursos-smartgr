@@ -54,11 +54,11 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 0;
+  padding: 20px 0;
   background: rgba(250, 251, 254, .9);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
-  margin-bottom: 32px;
+  margin-bottom: 36px;
 }
 
 .brand {
@@ -73,7 +73,7 @@ summary:focus-visible {
   font-size: 15px;
   letter-spacing: .04em;
 }
-.brand img { width: 110px; }
+.brand img { width: 122px; }
 .brand span { color: var(--blue); }
 
 .sync-pill {
@@ -122,8 +122,9 @@ h1 {
 }
 
 h2 {
-  font-size: clamp(20px, 3vw, 32px);
-  font-weight: 700;
+  font-size: clamp(22px, 3vw, 34px);
+  font-weight: 800;
+  letter-spacing: -.01em;
   color: var(--ink);
 }
 
@@ -530,17 +531,20 @@ h2 {
 
 /* ── BACK BTN ── */
 .back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: transparent;
   border: 0;
+  border-radius: 20px;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 0;
-  margin-bottom: 6px;
-  display: block;
-  transition: color .15s;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 5px 10px 5px 7px;
+  margin: 0 0 10px -7px;
+  transition: background .15s, color .15s;
 }
-.back-btn:hover { color: var(--blue); }
+.back-btn:hover { background: var(--soft); color: var(--blue); }
 
 /* ── EXPORT BUTTONS ── */
 .export-btns {
@@ -759,17 +763,22 @@ h2 {
   .event-analytics { grid-template-columns: 1fr; }
   .analytics-panel { padding: 20px; }
 }
+/* flex, não grid de 4 colunas — essa barra só tem 2 cards nesta tela (a de
+   status de inscritos, com 8+, usa outro componente). Com grid de 4 col
+   fixas, 2 cards deixavam metade da largura como vazio puro do lado. Flex
+   com largura própria por card faz eles se agruparem à esquerda, do
+   tamanho que o conteúdo pede. */
 .stats-bar {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-bottom: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 28px;
 }
-@media (max-width: 900px) {
-  .stats-bar { grid-template-columns: repeat(2, 1fr); }
+.stats-bar .stat-card {
+  flex: 0 1 230px;
 }
 @media (max-width: 480px) {
-  .stats-bar { grid-template-columns: 1fr; }
+  .stats-bar .stat-card { flex-basis: 100%; }
 }
 
 .stat-card {

@@ -64,4 +64,7 @@ export const icon = {
 
   arrowDown: (n = 14) =>
     sq(n, `<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>`),
+
+  chevronLeft: (n = 14) =>
+    sq(n, `<path d="m15 18-6-6 6-6"/>`),
 };
