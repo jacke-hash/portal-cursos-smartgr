@@ -1,0 +1,50 @@
+name: Backfill CPF (pedidos recentes)
+
+on:
+  schedule:
+    # 8h horário de Brasília (BRT = UTC-3) = 11h UTC — reprocessa os últimos
+    # 30 dias de pedidos. O app de checkout parece gravar cpf_cliente um
+    # pouco depois da Shopify criar o pedido, e nem sempre isso gera um novo
+    # webhook orders/updated pra gente reprocessar sozinho — esse job é o
+    # reforço, olhando de novo pedidos recentes que podem ter ganhado o dado.
+    - cron: '0 11 * * *'
+  workflow_dispatch:
+    inputs:
+      from:
+        description: 'Data inicial (YYYY-MM-DD). Vazio = últimos 30 dias.'
+        required: false
+        default: ''
+      to:
+        description: 'Data final (YYYY-MM-DD). Vazio = hoje.'
+        required: false
+        default: ''
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Calcular janela padrão (últimos 30 dias)
+        id: janela
+        run: |
+          FROM="${{ github.event.inputs.from }}"
+          if [ -z "$FROM" ]; then FROM=$(date -u -d '30 days ago' +%F); fi
+          echo "from=$FROM" >> "$GITHUB_OUTPUT"
+
+      - name: Executar backfill de CPF
+        run: node scripts/backfill-cpf.mjs --from=${{ steps.janela.outputs.from }} ${{ github.event.inputs.to && format('--to={0}', github.event.inputs.to) || '' }}
+        env:
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
