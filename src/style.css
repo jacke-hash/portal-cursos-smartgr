@@ -746,14 +746,19 @@ h2 {
 .audience-group--flat { display: flex; align-items: center; justify-content: space-between; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 700; color: var(--muted); }
 .audience-group--flat b { font-size: 13px; color: var(--ink); }
 .audience-group--muted { opacity: .65; }
-.valor-rows { display: grid; gap: 12px; }
-.valor-row {
+/* Grade fica em .valor-rows (não em cada .valor-row) — cada linha vira
+   "display: contents" pra entregar as células direto pro grid do pai, que é
+   quem precisa ser uma grade só pra "R$ 14.403,10" (linha 1) e "—" (linha 2)
+   alinharem na mesma coluna. Cada .valor-row com sua própria grade fazia as
+   duas larguras de coluna serem calculadas separadamente, desalinhando. */
+.valor-rows {
   display: grid;
   grid-template-columns: minmax(88px, 1fr) minmax(60px, auto) minmax(58px, auto);
   align-items: center;
-  gap: 10px;
+  gap: 10px 12px;
   font-size: 12.5px;
 }
+.valor-row { display: contents; }
 .valor-row-label { color: var(--ink); font-weight: 600; }
 .valor-row-money { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .valor-row b { font-size: 12.5px; }
