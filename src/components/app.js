@@ -1127,6 +1127,20 @@ function eventoAnalyticsContent() {
           <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
           ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5, especialidades)}
         </article>
+      </div>
+      <article class="analytics-panel">
+        <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos, 4, especialidades)}
+        ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
+        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
+        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
+      </article>
+      <div class="analytics-col">
+        <article class="analytics-panel">
+          <div class="event-panel-heading"><div><span class="event-kpi-label">Região</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
+          ${_statGroup("Por estado", "estado", insights.regiao.estados, null, 5)}
+          ${_statGroup("Por cidade", "cidade", insights.regiao.cidades, null, 5)}
+        </article>
         <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Valor</span><strong>${money.format(insights.valor.total)}</strong></div><span class="event-panel-caption">pagos</span></div>
           <div class="valor-rows">
@@ -1143,18 +1157,6 @@ function eventoAnalyticsContent() {
           </div>
         </article>
       </div>
-      <article class="analytics-panel">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos, 4, especialidades)}
-        ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
-        <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
-        ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
-      </article>
-      <article class="analytics-panel">
-        <div class="event-panel-heading"><div><span class="event-kpi-label">Região</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Por estado", "estado", insights.regiao.estados, null, 5)}
-        ${_statGroup("Por cidade", "cidade", insights.regiao.cidades, null, 5)}
-      </article>
     </section>`;
 }
 
