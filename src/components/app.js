@@ -923,8 +923,21 @@ function eventoInsights() {
     ...(publicoTotais.semPerfil ? [{ nome: "Não informado", total: publicoTotais.semPerfil }] : []),
   ].filter((g) => g.total > 0).sort((a, b) => b.total - a.total);
 
+  // Valor: pago (valorPago > 0) vs grátis (0 ou não informado) — contagem
+  // em ingressos (mesmo critério de quantidade do resto do painel), valor
+  // em R$ só faz sentido pro lado pago (grátis é sempre R$ 0 por definição).
+  const pagosList  = ativos.filter((i) => Number(valorPago(i)) > 0);
+  const gratisList = ativos.filter((i) => !(Number(valorPago(i)) > 0));
+  const valorTotal = ativos.reduce((soma, i) => soma + (Number(valorPago(i)) || 0), 0);
+  const valorPagosSoma = pagosList.reduce((soma, i) => soma + (Number(valorPago(i)) || 0), 0);
+
   return {
     ingressos: somaQuantidade(ativos),
+    valor: {
+      total: valorTotal,
+      pagos:  { count: somaQuantidade(pagosList),  valor: valorPagosSoma },
+      gratis: { count: somaQuantidade(gratisList) },
+    },
     publico: {
       profissional: { total: publicoTotais.profissional, formacoes: agruparFormacao(profissionais, "Não informada") },
       prescritores: { total: publicoTotais.prescritor, formacoes: agruparFormacao(prescritores, "Não informada") },
@@ -1101,6 +1114,8 @@ function eventoAnalyticsContent() {
   const { profissional, estudante, consumidor, semPerfil, prescritores, especialidades } = insights.publico;
   const pctConsumidor = insights.ingressos ? Math.round((consumidor.total / insights.ingressos) * 100) : 0;
   const pctSemPerfil  = insights.ingressos ? Math.round((semPerfil.total / insights.ingressos) * 100) : 0;
+  const pctPagos  = insights.ingressos ? Math.round((insights.valor.pagos.count / insights.ingressos) * 100) : 0;
+  const pctGratis = insights.ingressos ? Math.round((insights.valor.gratis.count / insights.ingressos) * 100) : 0;
   return `
     <section class="event-analytics" aria-label="Analytics do evento">
       <div class="analytics-col">
@@ -1111,6 +1126,21 @@ function eventoAnalyticsContent() {
         <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
           ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5, especialidades)}
+        </article>
+        <article class="analytics-panel">
+          <div class="event-panel-heading"><div><span class="event-kpi-label">Valor</span><strong>${money.format(insights.valor.total)}</strong></div><span class="event-panel-caption">pagos</span></div>
+          <div class="valor-rows">
+            <div class="valor-row">
+              <span class="valor-row-label">Ingressos pagos</span>
+              <span class="valor-row-money">${money.format(insights.valor.pagos.valor)}</span>
+              <b>${_statCount(insights.valor.pagos.count)}${_pctChip(pctPagos)}</b>
+            </div>
+            <div class="valor-row">
+              <span class="valor-row-label">Ingressos grátis</span>
+              <span class="valor-row-money">—</span>
+              <b>${_statCount(insights.valor.gratis.count)}${_pctChip(pctGratis)}</b>
+            </div>
+          </div>
         </article>
       </div>
       <article class="analytics-panel">
