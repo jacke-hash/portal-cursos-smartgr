@@ -1,4 +1,5 @@
 import {
+  getInscritos,
   getInscritosConfirmados,
   listenCursos,
   listenEncerrados,
@@ -218,6 +219,7 @@ let state = {
   sortDir: "desc",
   page: 1,
   selectedIds: new Set(),   // seleção manual de inscritos (bulk actions)
+  selectedEventoIds: new Set(), // seleção de eventos/variantes na tela do curso (export em lote)
   // Painéis de estatística do evento (público, vendedores, região): modo de
   // gráfico (bar/donut) e expansão da lista, por grupo. Começa em "donut"
   // (pizza) por padrão — usuário pode trocar pra barras pelo ícone.
@@ -762,6 +764,7 @@ function cursoView() {
     <div class="eventos-toolbar" id="eventos-toolbar">
       ${cursoToolbarContent(pastCount, sempreExibirEncerrados)}
     </div>
+    ${eventosBatchBar()}
     <section class="eventos-grid" id="eventos-content">
       ${eventoGridContent(sections)}
     </section>
@@ -783,19 +786,22 @@ function eventoCard(evento) {
       : `<span class="evento-vagas${restante <= 10 ? " evento-vagas--low" : ""}">${restante} vaga${restante !== 1 ? "s" : ""} restante${restante !== 1 ? "s" : ""}</span>`
     : "";
 
+  const sel = state.selectedEventoIds.has(evento.id);
   return `
-    <button class="evento-card${isPast ? " evento-past" : ""}"
-            data-action="open-evento" data-evento-id="${evento.id}">
-      <div class="evento-card-top">
-        <strong title="${evento.varianteTitle || evento.id}">${evento.varianteTitle || evento.id}</strong>
-        ${statusBadge}
-      </div>
-      ${capacidadeLine}
-      <div class="card-meta">
-        <span><b>${evento.totalInscritos || 0}</b> inscritos</span>
-        <span><b data-confirmados-for="${evento.id}">${_confirmadosCache.has(evento.id) ? _confirmadosCache.get(evento.id) : "…"}</b> confirmados</span>
-      </div>
-    </button>
+    <div class="evento-card${isPast ? " evento-past" : ""}">
+      <input type="checkbox" class="evento-card-check" data-action="toggle-select-evento" data-evento-id="${evento.id}" ${sel ? "checked" : ""} title="Selecionar pra exportar">
+      <button class="evento-card-main" data-action="open-evento" data-evento-id="${evento.id}">
+        <div class="evento-card-top">
+          <strong title="${evento.varianteTitle || evento.id}">${evento.varianteTitle || evento.id}</strong>
+          ${statusBadge}
+        </div>
+        ${capacidadeLine}
+        <div class="card-meta">
+          <span><b>${evento.totalInscritos || 0}</b> inscritos</span>
+          <span><b data-confirmados-for="${evento.id}">${_confirmadosCache.has(evento.id) ? _confirmadosCache.get(evento.id) : "…"}</b> confirmados</span>
+        </div>
+      </button>
+    </div>
   `;
 }
 
@@ -849,10 +855,6 @@ function _humanizeFormacao(raw) {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Nome do cliente vem cru do que a pessoa digitou no checkout ("Eliane maria
-// de Almeida leal pescuma") — só pra exibição, nunca toca o dado salvo
-// (busca/exportação continuam usando o valor original). Preposições comuns
-// ficam minúsculas mesmo no meio do nome, como é o padrão em português.
 const NAME_LOWERCASE_WORDS = new Set(["de", "da", "do", "das", "dos", "e"]);
 function _titleCaseName(name) {
   if (!name) return name;
@@ -1326,6 +1328,23 @@ function batchActionsBar() {
     </div>`;
 }
 
+// Exportação em lote de várias variantes/eventos do curso — evita abrir
+// evento por evento só pra exportar. Mesmo padrão visual da barra de lote
+// dos inscritos.
+function eventosBatchBar() {
+  const n = state.selectedEventoIds.size;
+  if (n === 0) return `<div id="eventos-batch-bar"></div>`;
+  return `
+    <div id="eventos-batch-bar" class="batch-bar">
+      <span class="batch-count">${n} variante${n > 1 ? "s" : ""} selecionada${n > 1 ? "s" : ""}</span>
+      <div class="batch-actions">
+        <button class="batch-btn batch-btn--export" data-action="export-eventos-excel">⬇ Exportar Excel</button>
+        <button class="batch-btn batch-btn--export" data-action="export-eventos-csv">⬇ Exportar CSV</button>
+        <button class="batch-btn batch-btn--clear" data-action="clear-selection-eventos">✕</button>
+      </div>
+    </div>`;
+}
+
 function printCounterBar(stats) {
   const total = stats.total; // apenas pagos
   const imp   = stats.impressos;
@@ -1716,6 +1735,7 @@ function cursoEventosPartialUpdate() {
   const statsBar    = root.querySelector("#curso-stats-bar");
   const toolbar     = root.querySelector("#eventos-toolbar");
   const eventosGrid = root.querySelector("#eventos-content");
+  const batchBar    = root.querySelector("#eventos-batch-bar");
 
   // Reconstrói os dois inteiros (não mutação pontual) — o card "Eventos
   // encerrados" e o botão da toolbar compartilham o mesmo data-action
@@ -1727,6 +1747,7 @@ function cursoEventosPartialUpdate() {
   if (toolbar)  toolbar.innerHTML  = cursoToolbarContent(pastCount, sempreExibirEncerrados);
 
   if (eventosGrid) eventosGrid.innerHTML = eventoGridContent(sections);
+  if (batchBar) batchBar.outerHTML = eventosBatchBar();
   hydrateConfirmados(visibleEventosParaConfirmados(sections));
 }
 
@@ -1763,6 +1784,21 @@ function handleClick(e) {
       state.showPastEventos = !state.showPastEventos;
       saveNav();
       cursoEventosPartialUpdate();
+
+    // ── Seleção de eventos/variantes (exportação em lote na tela do curso) ──
+    } else if (action === "toggle-select-evento") {
+      const id = el.dataset.eventoId;
+      if (state.selectedEventoIds.has(id)) state.selectedEventoIds.delete(id);
+      else state.selectedEventoIds.add(id);
+      const bar = root.querySelector("#eventos-batch-bar");
+      if (bar) bar.outerHTML = eventosBatchBar();
+    } else if (action === "clear-selection-eventos") {
+      state.selectedEventoIds = new Set();
+      cursoEventosPartialUpdate();
+    } else if (action === "export-eventos-excel") {
+      exportEventosSelecionados("excel"); // erro já tratado dentro (toast próprio)
+    } else if (action === "export-eventos-csv") {
+      exportEventosSelecionados("csv");
 
     // ── Painéis de estatística do evento (público, vendedores, região) ─────
     } else if (action === "toggle-audience-expand") {
@@ -2032,6 +2068,7 @@ function openCurso(cursoId) {
   state.eventoSearch = "";
   state.showPastEventos = false;
   state.page = 1;
+  state.selectedEventoIds = new Set();
   saveNav();
 
   if (unsubEventos)    unsubEventos();
@@ -2149,7 +2186,10 @@ function exportRow(i) {
     i.pedido || "",
     formatDate(i.dataCompra),
     state.curso?.nome || "",
-    state.evento?.varianteTitle || state.evento?.id || "",
+    // "Evento" usava state.evento global — ficava errado ao combinar
+    // inscritos de várias variantes numa exportação só (todas mostravam o
+    // mesmo evento "atual"). i.variante já é o dado certo por linha.
+    i.variante || "",
     i.variante || "",
     i.quantidade ?? 1,
     precoCat ? money.format(precoCat) : "0,00",
@@ -2169,18 +2209,27 @@ function _download(content, filename, type) {
   URL.revokeObjectURL(url);
 }
 
-function exportList(rows, suffix, format = "excel") {
-  const slug = (state.evento?.varianteTitle || state.evento?.id || "export")
-    .replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase();
-  const base = `lista-${suffix}-${slug}`;
+// Serialização/download em si — separado de exportList pra poder ser
+// reusado pela exportação em lote de várias variantes (curso), que monta
+// o nome do arquivo de outro jeito (não tem um "evento atual" único).
+function _exportRows(rows, filenameBase, format = "excel") {
   if (format === "csv") {
     const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [EXPORT_HEADERS.map(esc).join(","), ...rows.map(i => exportRow(i).map(esc).join(","))];
-    _download("﻿" + lines.join("\n"), `${base}.csv`, "text/csv;charset=utf-8");
+    _download("﻿" + lines.join("\n"), `${filenameBase}.csv`, "text/csv;charset=utf-8");
   } else {
     const lines = [EXPORT_HEADERS.join("\t"), ...rows.map(i => exportRow(i).join("\t"))];
-    _download("﻿" + lines.join("\n"), `${base}.xls`, "text/tab-separated-values;charset=utf-8");
+    _download("﻿" + lines.join("\n"), `${filenameBase}.xls`, "text/tab-separated-values;charset=utf-8");
   }
+}
+
+function _slugify(s) {
+  return String(s || "export").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase();
+}
+
+function exportList(rows, suffix, format = "excel") {
+  const slug = _slugify(state.evento?.varianteTitle || state.evento?.id);
+  _exportRows(rows, `lista-${suffix}-${slug}`, format);
 }
 
 function exportExcel()       { exportList(filteredInscritos(), "filtrados"); }
@@ -2190,4 +2239,24 @@ function exportImpressos()   { exportList(state.inscritos.filter(i => i.impresso
 function exportPendentes()   { exportList(state.inscritos.filter(i => !i.impresso), "pendentes"); }
 function exportSelecionados() {
   exportList(inscritosSelecionados(), "selecionados");
+}
+
+// Exporta os inscritos de várias variantes (eventos) do curso de uma vez —
+// evita abrir uma por uma só pra exportar. Cada variante é lida na hora
+// (não depende de nenhuma estar com listener ativo, a tela do curso nunca
+// carrega inscritos por padrão).
+async function exportEventosSelecionados(format = "excel") {
+  if (!state.curso || state.selectedEventoIds.size === 0) return;
+  const todos = [...state.eventos, ...state.encerrados];
+  const selecionados = [...state.selectedEventoIds].map((id) => todos.find((e) => e.id === id)).filter(Boolean);
+  if (!selecionados.length) return;
+
+  try {
+    const listas = await Promise.all(selecionados.map((ev) => getInscritos(state.curso.id, ev.id)));
+    const rows = listas.flat();
+    const base = `lista-${selecionados.length}-eventos-${_slugify(state.curso.nome)}`;
+    _exportRows(rows, base, format);
+  } catch (e) {
+    showToast("Não foi possível exportar. Tente novamente.");
+  }
 }

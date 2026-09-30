@@ -88,6 +88,15 @@ export function listenEvento(cursoId, eventoId, callback) {
   );
 }
 
+// Leitura pontual (não listener) de todos os inscritos de um evento — usada
+// pra exportar várias variantes de uma vez sem precisar abrir cada evento
+// (que assina os inscritos via listener só quando a página do evento abre).
+export async function getInscritos(cursoId, eventoId) {
+  const ref = collection(db, "cursos", cursoId, "eventos", eventoId, "inscritos");
+  const snap = await getDocs(query(ref, orderBy("dataCompra", "desc")));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
 export function listenInscritos(cursoId, eventoId, callback) {
   const ref = collection(db, "cursos", cursoId, "eventos", eventoId, "inscritos");
   return onSnapshot(
