@@ -378,15 +378,23 @@ async function resolveVariantFromInventoryItem(inventoryItemId, accessToken) {
       headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, variables: { id: `gid://shopify/InventoryItem/${inventoryItemId}` } }),
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      console.log(`[resolveVariantFromInventoryItem] HTTP ${resp.status}: ${await resp.text()}`);
+      return null;
+    }
     const data = await resp.json();
+    if (data.errors) console.log(`[resolveVariantFromInventoryItem] GraphQL errors: ${JSON.stringify(data.errors)}`);
     const variant = data?.data?.inventoryItem?.variant;
-    if (!variant?.id || !variant?.product?.id) return null;
+    if (!variant?.id || !variant?.product?.id) {
+      console.log(`[resolveVariantFromInventoryItem] Sem variant/product na resposta: ${JSON.stringify(data)}`);
+      return null;
+    }
     return {
       variantId:  variant.id.split('/').pop(),
       productId:  Number(variant.product.id.split('/').pop()),
     };
-  } catch {
+  } catch (e) {
+    console.log(`[resolveVariantFromInventoryItem] Exceção: ${e.message}`);
     return null;
   }
 }
