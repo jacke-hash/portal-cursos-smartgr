@@ -1,5 +1,5 @@
 // Cloudflare Worker — Shopify Webhook → Firestore
-// Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create
+// Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create · inventory_levels/update
 
 // ── Catálogo de cursos monitorados ─────────────────────────────────────────────
 
@@ -364,6 +364,33 @@ async function getVariantInventory(variantId, accessToken) {
   }
 }
 
+// Resolve productId/variantId a partir do inventory_item_id recebido no
+// webhook inventory_levels/update — o payload desse tópico só traz
+// inventory_item_id + location_id + available, nunca variant/product. A API
+// REST não expõe essa relação reversa (inventory_item → variant), então usa
+// GraphQL. Nunca lança erro — retorna null em qualquer falha.
+async function resolveVariantFromInventoryItem(inventoryItemId, accessToken) {
+  if (!accessToken) return null;
+  try {
+    const query = `query($id: ID!) { inventoryItem(id: $id) { variant { id product { id } } } }`;
+    const resp = await fetch(`https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables: { id: `gid://shopify/InventoryItem/${inventoryItemId}` } }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const variant = data?.data?.inventoryItem?.variant;
+    if (!variant?.id || !variant?.product?.id) return null;
+    return {
+      variantId:  variant.id.split('/').pop(),
+      productId:  Number(variant.product.id.split('/').pop()),
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Delta de totalInscritos/confirmados causado por UM inscrito mudando de
 // estado (existing → isActiveAfter/isConfirmadoAfter). Evita reler a
 // subcoleção inteira de inscritos a cada pedido só pra saber esses dois
@@ -620,6 +647,39 @@ async function handleCancelled(db, order, env) {
   }
 }
 
+// inventory_levels/update dispara por QUALQUER mudança de estoque
+// (fulfillment, ajuste manual, não só pedido) — substitui o polling de
+// scripts/sync-capacidade.mjs, que dependia de cron do GitHub Actions e na
+// prática rodava a cada várias horas em vez dos 5min configurados (deixava
+// "vagas restantes" visivelmente desatualizado no portal).
+//
+// Relê o estoque agregado da variante (mesma getVariantInventory do fluxo de
+// pedido) em vez de usar payload.available direto, porque o payload é por
+// location — relendo cobre lojas com mais de um local de estoque.
+async function handleInventoryLevelUpdate(db, payload, env) {
+  const resolved = await resolveVariantFromInventoryItem(payload.inventory_item_id, env.SHOPIFY_ACCESS_TOKEN);
+  if (!resolved || !VALID_PRODUCT_IDS.has(resolved.productId)) {
+    console.log(`[inventory_levels/update] Item não mapeado a um curso monitorado: inventory_item_id=${payload.inventory_item_id}`);
+    return;
+  }
+
+  const { productId, variantId } = resolved;
+  const path = `cursos/${productId}/eventos/${variantId}`;
+  const exists = await db.get(path);
+  if (!exists) {
+    // Evento ainda sem nenhum pedido — recalcEvento (disparado pelo primeiro
+    // pedido) já lê o estoque na criação, nada a fazer aqui.
+    console.log(`[inventory_levels/update] Evento ainda não existe: ${path}`);
+    return;
+  }
+
+  const capacidadeDisponivel = await getVariantInventory(variantId, env.SHOPIFY_ACCESS_TOKEN);
+  if (capacidadeDisponivel === null) return;
+
+  await db.patch(path, { capacidadeDisponivel, updatedAt: new Date() });
+  console.log(`[inventory_levels/update] ${path}: capacidadeDisponivel = ${capacidadeDisponivel}`);
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 export default {
@@ -725,6 +785,11 @@ export default {
           // Usa o financial_status real do pedido (refunded ou partially_refunded)
           await processOrder(db, order, order.financial_status, env);
           console.log(`[webhook] Reembolso ${payload.id} processado: financialStatus=${order.financial_status}`);
+          break;
+        }
+
+        case 'inventory_levels/update': {
+          await handleInventoryLevelUpdate(db, payload, env);
           break;
         }
 
