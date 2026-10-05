@@ -197,6 +197,20 @@ function loadNav() {
   } catch (_) { return null; }
 }
 
+// Link aberto do zero (nova aba, digitou a URL, clicou num link) deve cair na
+// página inicial — só um F5/reload de verdade restaura onde estava. A
+// localStorage sozinha não distingue os dois casos (persiste em ambos), por
+// isso checa o tipo de navegação reportado pelo browser.
+function isPageReload() {
+  try {
+    const nav = performance.getEntriesByType("navigation")[0];
+    if (nav) return nav.type === "reload";
+    return performance.navigation?.type === 1;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ─── STATE ───────────────────────────────────────────────────────────────────
 
 let state = {
@@ -252,8 +266,10 @@ let root;
 
 export function renderApp(target) {
   root = target;
-  // [alteração 2] carrega estado salvo antes de qualquer render
-  pendingRestore = loadNav();
+  // [alteração 2] carrega estado salvo antes de qualquer render — só em
+  // reload de verdade; abertura nova (nova aba, URL digitada) sempre começa
+  // do zero, mesmo com nav salva de uma sessão anterior.
+  pendingRestore = isPageReload() ? loadNav() : null;
   root.innerHTML = shell();
   bindGlobalEvents();
   // [alteração 2] salva posição de scroll no unload para restaurar após F5
