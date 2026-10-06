@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant } from '../shared/eventos.mjs';
 
 // --- Caminhos ---
 
@@ -46,11 +47,17 @@ const KNOWN_COURSES = new Map([
 
 const VALID_PRODUCT_IDS = new Set(KNOWN_COURSES.keys());
 
+// Todo produto com as 3 tags abaixo é curso, mesmo fora de KNOWN_COURSES —
+// descobertos na FASE 1 e adicionados ao KNOWN_COURSES/VALID_PRODUCT_IDS.
+// Mesma regra do worker shopify-webhook (hasCursoTags).
+const REQUIRED_TAGS = ['cursos', 'treinamento', 'presencial'];
+function hasCursoTags(tags) {
+  const set = new Set(String(tags || '').split(',').map(t => t.trim().toLowerCase()));
+  return REQUIRED_TAGS.every(t => set.has(t));
+}
+
 // IDs que devem obrigatoriamente existir na Shopify
 const CRITICAL_IDS = [8695759601821, 8928830193821];
-
-// Ignorar variantes com data anterior a 01/06/2026
-const DATE_CUTOFF = new Date('2026-06-01T12:00:00.000Z');
 
 // Statuses derivados da Shopify que indicam inscrito inativo (não pago)
 const INACTIVE_STATUS_LABELS = new Set([
@@ -184,40 +191,6 @@ async function fetchAllPages(firstUrl, extractItems) {
 
 // --- Helpers de dados ---
 
-// Parseia variante.
-// Formato com data: "13/07/2026 - São Paulo (Zona Sul)" → { date: Date, local: string }
-// Formato sem data: "Lote 1", "VIP", "Congressista"    → { date: null, local: string }
-// Retorna null apenas se title for vazio ou não-string.
-function parseVariantTitle(title) {
-  if (!title || typeof title !== 'string') return null;
-
-  const idx = title.indexOf(' - ');
-
-  // Sem separador " - ": variante sem data (ex: "Lote 1", "VIP")
-  if (idx === -1) {
-    return { date: null, local: title.trim() };
-  }
-
-  const datePart = title.slice(0, idx).trim();
-  const local = title.slice(idx + 3).trim();
-  const segments = datePart.split('/');
-
-  // Separador existe mas parte esquerda não é DD/MM/YYYY
-  if (segments.length !== 3) {
-    return { date: null, local: title.trim() };
-  }
-
-  const [day, month, year] = segments;
-  const date = new Date(`${year}-${month}-${day}T12:00:00.000Z`);
-
-  // Data inválida: tratar como variante sem data
-  if (isNaN(date.getTime())) {
-    return { date: null, local: title.trim() };
-  }
-
-  return { date, local };
-}
-
 function getCustomerName(order) {
   const first =
     order.billing_address?.first_name ||
@@ -261,15 +234,6 @@ async function getCustomerCpf(customerId) {
   return cpf;
 }
 
-// Evento encerrado quando a data de calendário é <= hoje (inclui o próprio dia)
-function isEventoEncerrado(date) {
-  if (!date) return false;
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-  const evDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  return evDay <= hoje;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN
 // ─────────────────────────────────────────────────────────────────────────────
@@ -287,11 +251,20 @@ async function sync() {
   console.log('Buscando TODOS os produtos na Shopify...');
 
   const allProducts = await fetchAllPages(
-    `${SHOPIFY_BASE}/products.json?limit=250&fields=id,title,status`,
+    `${SHOPIFY_BASE}/products.json?limit=250&fields=id,title,status,tags`,
     d => d.products || []
   );
 
   console.log(`\nTotal de produtos encontrados na Shopify: ${allProducts.length}`);
+
+  for (const p of allProducts) {
+    const id = Number(p.id);
+    if (!VALID_PRODUCT_IDS.has(id) && hasCursoTags(p.tags)) {
+      KNOWN_COURSES.set(id, p.title);
+      VALID_PRODUCT_IDS.add(id);
+      console.log(`  + Curso descoberto pelas tags: ${id} "${p.title}"`);
+    }
+  }
 
   // Indexar por id
   const shopifyProductMap = new Map();
@@ -401,37 +374,32 @@ async function sync() {
       const variantId    = String(variant.id);
       const variantTitle = variant.title || '';
 
-      const parsed = parseVariantTitle(variantTitle);
-      if (!parsed) {
-        console.log(`    - ignorada (título inválido): "${variantTitle}"`);
+      // Produto sem turmas cadastradas: a Shopify cria só "Default Title" —
+      // não gera evento (mesma regra do handler products/* do worker).
+      // Continua em shopifyVariantIds, então não desativa evento existente.
+      if (isDefaultVariant(variant)) {
+        console.log(`    - ignorada (variante padrão "Default Title")`);
         continue;
       }
 
-      const { date } = parsed;
-
-      // Corte de data: variante com data anterior ao cutoff não gera evento
-      if (date !== null && date < DATE_CUTOFF) {
-        console.log(`    - ignorada (data anterior ao corte): "${variantTitle}"`);
+      // Título inválido ou data anterior ao corte: variante não gera evento
+      const campos = buildEventoFields(variant);
+      if (!campos) {
+        console.log(`    - ignorada (título inválido ou data anterior ao corte): "${variantTitle}"`);
         continue;
       }
 
-      const encerrado = isEventoEncerrado(date);
+      const { encerrado } = campos;
       const eventoRef = cursoRef.collection('eventos').doc(variantId);
       const jaExiste  = eventosFS.some(ev => ev.id === variantId);
 
       try {
         await eventoRef.set(
           {
-            varianteTitle: variantTitle,
-            varianteId:    variantId,
-            data:          date ? Timestamp.fromDate(date) : null,
-            ativo:         !encerrado,
-            encerrado,
-            // Vagas restantes reportadas pela Shopify (estoque da variante) —
-            // somada ao totalInscritos ativos dá a capacidade total do evento.
-            // Omitido (não sobrescreve) quando a Shopify não reporta um número,
-            // pra nunca zerar um valor bom por uma falha pontual da API.
-            ...(typeof variant.inventory_quantity === 'number' ? { capacidadeDisponivel: variant.inventory_quantity } : {}),
+            // capacidadeDisponivel (vagas restantes) só vem quando a Shopify
+            // reporta um número — ver buildEventoFields.
+            ...campos,
+            data:          campos.data ? Timestamp.fromDate(campos.data) : null,
             updatedAt:     Timestamp.now(),
           },
           { merge: true }   // preserva totalInscritos/confirmados existentes

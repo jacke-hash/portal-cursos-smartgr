@@ -1,5 +1,6 @@
 // Cloudflare Worker — Shopify Webhook → Firestore
-// Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create · inventory_levels/update
+// Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create · inventory_levels/update · products/create · products/update
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant } from '../../../shared/eventos.mjs';
 
 // ── Catálogo de cursos monitorados ─────────────────────────────────────────────
 
@@ -21,8 +22,32 @@ const KNOWN_COURSES = new Map([
   [8992580731037, 'Prisma Peeling - A Tecnologia do Gerenciamento da Pele Curso Exclusivo com Juliana Gorreri'],
 ]);
 
-const VALID_PRODUCT_IDS = new Set(KNOWN_COURSES.keys());
-const DATE_CUTOFF = new Date('2026-06-01T12:00:00.000Z');
+// Todo produto com as 3 tags abaixo é curso, mesmo fora de KNOWN_COURSES.
+// Mesma regra de scripts/sync-shopify.mjs (hasCursoTags).
+const REQUIRED_TAGS = ['cursos', 'treinamento', 'presencial'];
+function hasCursoTags(tags) {
+  const set = new Set(String(tags || '').split(',').map(t => t.trim().toLowerCase()));
+  return REQUIRED_TAGS.every(t => set.has(t));
+}
+
+// Nome do curso se productId é monitorado (KNOWN_COURSES ou tags na Shopify),
+// senão null. Line items do pedido não trazem tags, então produto fora de
+// KNOWN_COURSES é consultado na API. Lança erro em falha de rede/HTTP (exceto
+// 404) pra Shopify refazer a entrega em vez de descartar a inscrição.
+async function resolveCurso(productId, env) {
+  const known = KNOWN_COURSES.get(productId);
+  if (known) return known;
+  if (!productId || !env?.SHOPIFY_ACCESS_TOKEN) return null;
+  const resp = await fetch(
+    `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}.json?fields=id,title,tags`,
+    { headers: { 'X-Shopify-Access-Token': env.SHOPIFY_ACCESS_TOKEN } }
+  );
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`Shopify product ${productId}: ${resp.status}`);
+  const { product } = await resp.json();
+  return hasCursoTags(product?.tags) ? (product.title || '') : null;
+}
+
 const SHOPIFY_STORE = 'smart-gr-pro.myshopify.com';
 
 // Mapeia financial_status da Shopify para label operacional do portal.
@@ -230,24 +255,17 @@ class Firestore {
     } while (pageToken);
     return docs;
   }
+
+  // Verdadeiro se a coleção tem ao menos um documento (1 leitura)
+  async hasDocs(path) {
+    const resp = await fetch(`${this.base}/${path}?pageSize=1`, { headers: this.auth });
+    if (!resp.ok) throw new Error(`Firestore LIST /${path}: ${resp.status}`);
+    return ((await resp.json()).documents || []).length > 0;
+  }
 }
 
 // ── Lógica de domínio ──────────────────────────────────────────────────────────
 // Espelhadas de sync-shopify.mjs para garantir paridade.
-
-function parseVariantTitle(title) {
-  if (!title || typeof title !== 'string') return null;
-  const idx = title.indexOf(' - ');
-  if (idx === -1) return { date: null, local: title.trim() };
-  const datePart = title.slice(0, idx).trim();
-  const local = title.slice(idx + 3).trim();
-  const segments = datePart.split('/');
-  if (segments.length !== 3) return { date: null, local: title.trim() };
-  const [day, month, year] = segments;
-  const date = new Date(`${year}-${month}-${day}T12:00:00.000Z`);
-  if (isNaN(date.getTime())) return { date: null, local: title.trim() };
-  return { date, local };
-}
 
 function calcFinancials(item, order) {
   // current_quantity reflete a quantidade após edições/reembolsos do pedido;
@@ -455,7 +473,7 @@ async function recalcEvento(db, productId, variantId, varianteTitle, date, env, 
   }
 }
 
-async function recalcCurso(db, productId) {
+async function recalcCurso(db, productId, nomeCurso) {
   const eventos        = await db.list(`cursos/${productId}/eventos`);
   const totalInscritos = eventos.reduce((s, e) => s + (e.totalInscritos || 0), 0);
   const agora = new Date();
@@ -473,8 +491,9 @@ async function recalcCurso(db, productId) {
   // isso o patch só grava os agregados e o documento nasce sem os campos que o
   // portal usa para listar cursos (where ativo == true), deixando-o invisível
   // até alguém rodar scripts/sync-shopify.mjs manualmente.
+  const existing = await db.get(`cursos/${productId}`);
   const patch = {
-    nome: KNOWN_COURSES.get(productId) || '',
+    nome: KNOWN_COURSES.get(productId) || nomeCurso || existing?.nome || '',
     ativo: true,
     totalInscritos, totalEventos: eventos.length, proximoEventoLabel, updatedAt: new Date(),
   };
@@ -483,7 +502,6 @@ async function recalcCurso(db, productId) {
   // o operador controla esse campo pelo menu de curso no portal (ocultar/
   // encerrar/reativar); se todo pedido reescrevesse status:'active', qualquer
   // curso ocultado/encerrado voltaria a "active" sozinho no próximo pedido.
-  const existing = await db.get(`cursos/${productId}`);
   if (!existing || existing.status === undefined) {
     patch.status = 'active';
   }
@@ -505,9 +523,9 @@ async function processOrder(db, order, financialStatus, env) {
 
   for (const item of lineItems) {
     const productId = Number(item.product_id);
-    const courseName = KNOWN_COURSES.get(productId);
+    const courseName = await resolveCurso(productId, env);
 
-    if (!VALID_PRODUCT_IDS.has(productId)) {
+    if (!courseName) {
       console.log(`[processOrder] Produto ignorado: product_id=${item.product_id} title="${item.title}"`);
       continue;
     }
@@ -587,16 +605,16 @@ async function processOrder(db, order, financialStatus, env) {
       console.log(`[processOrder] Inscrito criado: ${inscritoId} financialStatus=${financialStatus} cliente="${cust.cliente}"`);
     }
 
-    affected.push({ productId, variantId, varianteTitle: item.variant_title, date: parsed.date, delta });
+    affected.push({ productId, courseName, variantId, varianteTitle: item.variant_title, date: parsed.date, delta });
   }
 
   const seen = new Set();
-  for (const { productId, variantId, varianteTitle, date, delta } of affected) {
+  for (const { productId, courseName, variantId, varianteTitle, date, delta } of affected) {
     const key = `${productId}:${variantId}`;
     if (!seen.has(key)) {
       seen.add(key);
       await recalcEvento(db, productId, variantId, varianteTitle, date, env, delta);
-      await recalcCurso(db, productId);
+      await recalcCurso(db, productId, courseName);
       console.log(`[processOrder] Agregados recalculados: curso=${productId} evento=${variantId}`);
     }
   }
@@ -616,7 +634,7 @@ async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
   const now = new Date();
   for (const item of order.line_items || []) {
     const productId = Number(item.product_id);
-    if (!VALID_PRODUCT_IDS.has(productId) || !item.variant_id) continue;
+    if (!item.variant_id || !(await resolveCurso(productId, env))) continue;
 
     const variantId  = String(item.variant_id);
     const inscritoId = `${order.id}-${variantId}`;
@@ -639,7 +657,7 @@ async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
 async function handleCancelled(db, order, env) {
   for (const item of order.line_items || []) {
     const productId = Number(item.product_id);
-    if (!VALID_PRODUCT_IDS.has(productId) || !item.variant_id) continue;
+    if (!item.variant_id || !(await resolveCurso(productId, env))) continue;
 
     const variantId = String(item.variant_id);
     const path      = `cursos/${productId}/eventos/${variantId}/inscritos/${order.id}-${variantId}`;
@@ -666,7 +684,7 @@ async function handleCancelled(db, order, env) {
 // location — relendo cobre lojas com mais de um local de estoque.
 async function handleInventoryLevelUpdate(db, payload, env) {
   const resolved = await resolveVariantFromInventoryItem(payload.inventory_item_id, env.SHOPIFY_ACCESS_TOKEN);
-  if (!resolved || !VALID_PRODUCT_IDS.has(resolved.productId)) {
+  if (!resolved || !(await resolveCurso(resolved.productId, env))) {
     console.log(`[inventory_levels/update] Item não mapeado a um curso monitorado: inventory_item_id=${payload.inventory_item_id}`);
     return;
   }
@@ -686,6 +704,90 @@ async function handleInventoryLevelUpdate(db, payload, env) {
 
   await db.patch(path, { capacidadeDisponivel, updatedAt: new Date() });
   console.log(`[inventory_levels/update] ${path}: capacidadeDisponivel = ${capacidadeDisponivel}`);
+}
+
+// products/create · products/update: cria o curso e sincroniza os eventos
+// (variantes) assim que o produto com as 3 tags é cadastrado/editado na
+// Shopify, sem esperar o primeiro pedido. Mesma montagem de evento do
+// scripts/sync-shopify.mjs (shared/eventos.mjs): só campos vindos da Shopify
+// (título, data, ativo/encerrado, estoque) — nunca totalInscritos/confirmados.
+//
+// products/update dispara a cada edição (preço, imagem, estoque), então:
+//  - tags e variantes vêm do próprio payload (sem chamada à API da Shopify);
+//  - só grava evento que não existe ou cujos campos mudaram;
+//  - o doc do curso é lido antes de qualquer chamada extra à Shopify.
+// Variante "Default Title" (produto sem turmas cadastradas) não gera evento.
+function eventoMudou(existing, campos) {
+  const t = (d) => (d instanceof Date ? d.getTime() : null);
+  return existing.varianteTitle !== campos.varianteTitle
+    || t(existing.data) !== t(campos.data)
+    || existing.ativo !== campos.ativo
+    || existing.encerrado !== campos.encerrado
+    || ('capacidadeDisponivel' in campos && existing.capacidadeDisponivel !== campos.capacidadeDisponivel);
+}
+
+async function handleProductUpsert(db, payload, env) {
+  const productId = Number(payload.id);
+  if (!productId || !hasCursoTags(payload.tags)) {
+    console.log(`[products] Produto sem as tags de curso: id=${payload.id} tags="${payload.tags || ''}"`);
+    return;
+  }
+
+  const cursoExiste = !!(await db.get(`cursos/${productId}`));
+
+  // O payload do webhook traz as variantes; só consulta a API se faltarem.
+  // Lança erro em falha (500 → Shopify reenvia).
+  let variants = payload.variants;
+  if (!Array.isArray(variants)) {
+    const resp = await fetch(
+      `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}/variants.json?limit=250`,
+      { headers: { 'X-Shopify-Access-Token': env.SHOPIFY_ACCESS_TOKEN } }
+    );
+    if (!resp.ok) throw new Error(`Shopify variants ${productId}: ${resp.status}`);
+    variants = (await resp.json()).variants || [];
+  }
+  // IDs de todas as variantes atuais (inclusive "Default Title"): só quem não
+  // está aqui é órfão. Mesmo critério de scripts/sync-shopify.mjs.
+  const variantIds = new Set(variants.map(v => String(v.id)));
+  variants = variants.filter(v => !isDefaultVariant(v));
+
+  let criados = 0, atualizados = 0, desativados = 0;
+  // Sem nenhuma variante no payload (não deveria ocorrer): não mexe nos eventos
+  if (variantIds.size) {
+    const existentes = new Map((await db.list(`cursos/${productId}/eventos`)).map(e => [e.id, e]));
+    const now = new Date();
+    for (const variant of variants) {
+      const campos = buildEventoFields(variant, now);
+      if (!campos) {
+        console.log(`[products] Variante ignorada (título inválido ou anterior ao corte): "${variant.title}"`);
+        continue;
+      }
+      const existing = existentes.get(campos.varianteId);
+      if (existing && !eventoMudou(existing, campos)) continue;
+      await db.patch(`cursos/${productId}/eventos/${campos.varianteId}`, { ...campos, updatedAt: now });
+      if (existing) atualizados++; else criados++;
+    }
+
+    // Órfãos: evento no Firestore cuja variante não existe mais na Shopify.
+    // Desativa só se não tiver inscritos (nunca apaga); com inscritos, só avisa.
+    for (const [id, ev] of existentes) {
+      if (variantIds.has(id) || ev.ativo === false) continue;
+      const path = `cursos/${productId}/eventos/${id}`;
+      if ((ev.totalInscritos || 0) > 0 || await db.hasDocs(`${path}/inscritos`)) {
+        console.log(`[products] AVISO: evento órfão com inscritos, mantido ativo: ${path} "${ev.varianteTitle || ''}"`);
+        continue;
+      }
+      await db.patch(path, { ativo: false, encerrado: true, updatedAt: now });
+      desativados++;
+      console.log(`[products] Evento órfão desativado: ${path} "${ev.varianteTitle || ''}"`);
+    }
+  }
+
+  // Recalcula agregados do curso (totalEventos, próximo evento) só se algo mudou
+  if (!cursoExiste || criados || atualizados || desativados) {
+    await recalcCurso(db, productId, payload.title || '');
+  }
+  console.log(`[products] ${productId} "${payload.title}": curso ${cursoExiste ? 'existente' : 'criado'}, eventos ${criados} criado(s) / ${atualizados} atualizado(s) / ${desativados} desativado(s)`);
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -798,6 +900,12 @@ export default {
 
         case 'inventory_levels/update': {
           await handleInventoryLevelUpdate(db, payload, env);
+          break;
+        }
+
+        case 'products/create':
+        case 'products/update': {
+          await handleProductUpsert(db, payload, env);
           break;
         }
 
