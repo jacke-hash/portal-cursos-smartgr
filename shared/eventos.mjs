@@ -79,3 +79,10 @@ export function buildEventoFields(variant, now = new Date()) {
     ...(typeof variant.inventory_quantity === 'number' ? { capacidadeDisponivel: variant.inventory_quantity } : {}),
   };
 }
+
+// Campos de um evento tratado como encerrado por regra de negócio (ex.: variante
+// "Default Title" — produto sem turmas reais). Só desativa: nunca apaga o evento
+// nem seus inscritos.
+export function buildEventoEncerradoFields() {
+  return { ativo: false, encerrado: true };
+}

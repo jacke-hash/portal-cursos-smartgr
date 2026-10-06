@@ -1,6 +1,6 @@
 // Cloudflare Worker — Shopify Webhook → Firestore
 // Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create · inventory_levels/update · products/create · products/update
-import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant } from '../../../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, buildEventoEncerradoFields, isDefaultVariant } from '../../../shared/eventos.mjs';
 
 // ── Catálogo de cursos monitorados ─────────────────────────────────────────────
 
@@ -735,6 +735,15 @@ async function handleProductUpsert(db, payload, env) {
 
   const cursoExiste = !!(await db.get(`cursos/${productId}`));
 
+  // Produto em rascunho/arquivado não mexe em eventos (criar, atualizar ou
+  // desativar). O curso em si ainda é criado se não existir. Payload sem
+  // `status` é tratado como ativo, pra não parar o sync por um campo ausente.
+  if (payload.status && payload.status !== 'active') {
+    console.log(`[products] Produto com status "${payload.status}": eventos ignorados id=${productId} "${payload.title}"`);
+    if (!cursoExiste) await recalcCurso(db, productId, payload.title || '');
+    return;
+  }
+
   // O payload do webhook traz as variantes; só consulta a API se faltarem.
   // Lança erro em falha (500 → Shopify reenvia).
   let variants = payload.variants;
@@ -749,6 +758,7 @@ async function handleProductUpsert(db, payload, env) {
   // IDs de todas as variantes atuais (inclusive "Default Title"): só quem não
   // está aqui é órfão. Mesmo critério de scripts/sync-shopify.mjs.
   const variantIds = new Set(variants.map(v => String(v.id)));
+  const variantsPadrao = variants.filter(isDefaultVariant);
   variants = variants.filter(v => !isDefaultVariant(v));
 
   let criados = 0, atualizados = 0, desativados = 0;
@@ -766,6 +776,19 @@ async function handleProductUpsert(db, payload, env) {
       if (existing && !eventoMudou(existing, campos)) continue;
       await db.patch(`cursos/${productId}/eventos/${campos.varianteId}`, { ...campos, updatedAt: now });
       if (existing) atualizados++; else criados++;
+    }
+
+    // "Default Title" nunca gera evento novo, mas um evento já existente dessa
+    // variante (sem turma real) é marcado como encerrado — mesmo com inscritos
+    // (só encerra: não apaga evento nem inscritos). Já encerrado: não regrava.
+    for (const variant of variantsPadrao) {
+      const id = String(variant.id);
+      const ev = existentes.get(id);
+      if (!ev || (ev.ativo === false && ev.encerrado === true)) continue;
+      const path = `cursos/${productId}/eventos/${id}`;
+      await db.patch(path, { ...buildEventoEncerradoFields(), updatedAt: now });
+      desativados++;
+      console.log(`[products] Evento "Default Title" encerrado: ${path} (inscritos: ${ev.totalInscritos || 0})`);
     }
 
     // Órfãos: evento no Firestore cuja variante não existe mais na Shopify.
