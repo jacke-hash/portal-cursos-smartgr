@@ -727,6 +727,7 @@ async function sync() {
         {
           totalInscritos: totalCurso,
           totalEventos: eventosSnap.size,
+          totalEventosAtivos: eventosSnap.docs.filter(d => d.data().ativo === true).length,
           proximoEventoLabel,
           updatedAt: Timestamp.now(),
         },

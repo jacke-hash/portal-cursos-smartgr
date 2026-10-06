@@ -84,7 +84,7 @@ async function recalcCurso(productId) {
   const cursoRef = db.collection('cursos').doc(String(productId));
   const eventosSnap = await cursoRef.collection('eventos').get();
   const totalInscritos = eventosSnap.docs.reduce((s, d) => s + (d.data().totalInscritos || 0), 0);
-  await cursoRef.set({ totalInscritos, totalEventos: eventosSnap.size, updatedAt: Timestamp.now() }, { merge: true });
+  await cursoRef.set({ totalInscritos, totalEventos: eventosSnap.size, totalEventosAtivos: eventosSnap.docs.filter(d => d.data().ativo === true).length, updatedAt: Timestamp.now() }, { merge: true });
 }
 
 async function main() {

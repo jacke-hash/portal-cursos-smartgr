@@ -578,7 +578,9 @@ function courseCard(curso) {
   // totalEventos só existe em cursos já recalculados pelo worker/sync depois
   // desta melhoria — omite a linha em vez de arriscar mostrar "0" errado
   // para cursos antigos que já têm eventos mas ainda não foram recontados.
-  const totalEventos = curso.totalEventos;
+  // O card mostra só eventos ativos (totalEventosAtivos); cai para totalEventos
+  // em cursos ainda não recontados depois da introdução do campo.
+  const totalEventos = curso.totalEventosAtivos ?? curso.totalEventos;
   return `
     <div class="course-card${cfg.cardClass ? " " + cfg.cardClass : ""}">
       <button class="course-card-main" data-action="open-curso" data-curso-id="${curso.id}">

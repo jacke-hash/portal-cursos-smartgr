@@ -495,7 +495,10 @@ async function recalcCurso(db, productId, nomeCurso) {
   const patch = {
     nome: KNOWN_COURSES.get(productId) || nomeCurso || existing?.nome || '',
     ativo: true,
-    totalInscritos, totalEventos: eventos.length, proximoEventoLabel, updatedAt: new Date(),
+    totalInscritos, totalEventos: eventos.length,
+    // Só eventos ativos — número exibido no card do curso no portal
+    totalEventosAtivos: eventos.filter(e => e.ativo === true).length,
+    proximoEventoLabel, updatedAt: new Date(),
   };
 
   // status: só é definido na criação do documento. Nunca sobrescrever aqui —

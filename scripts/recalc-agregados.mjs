@@ -53,6 +53,7 @@ async function main() {
 
   for (const [productId, { nome }] of cursos) {
     const eventosSnap = await db.collection('cursos').doc(String(productId)).collection('eventos').get();
+    let ativosNoCurso = 0;
 
     for (const eventoDoc of eventosSnap.docs) {
       eventosVarridos++;
@@ -90,6 +91,7 @@ async function main() {
       }
 
       const precisaAtualizarStatus = ativoCorreto !== atual.ativo || encerradoCorreto !== atual.encerrado;
+      if (ativoCorreto === true) ativosNoCurso++;
       if (totalSalvo === totalReal && confirmadosSalvo === confirmadosReal && !precisaAtualizarStatus) continue;
 
       const patch = { totalInscritos: totalReal, confirmados: confirmadosReal, updatedAt: Timestamp.now() };
@@ -99,6 +101,16 @@ async function main() {
       const statusMsg = precisaAtualizarStatus ? ` | ativo ${atual.ativo}→${ativoCorreto}, encerrado ${atual.encerrado}→${encerradoCorreto}` : '';
       console.log(`  ${APPLY ? '' : '(simulação) '}${nome} / ${atual.varianteTitle || eventoDoc.id}: totalInscritos ${totalSalvo}→${totalReal} | confirmados ${confirmadosSalvo}→${confirmadosReal}${statusMsg}`);
       corrigidos++;
+    }
+
+    // O card do curso no portal mostra só eventos ativos (totalEventosAtivos).
+    // Eventos ficam inativos por data/órfão sem passar pelo worker, então a
+    // recontagem também corrige esse número (e totalEventos) no doc do curso.
+    const cursoRef = db.collection('cursos').doc(String(productId));
+    const cursoAtual = (await cursoRef.get()).data() || {};
+    if (cursoAtual.totalEventosAtivos !== ativosNoCurso || cursoAtual.totalEventos !== eventosSnap.size) {
+      if (APPLY) await cursoRef.set({ totalEventos: eventosSnap.size, totalEventosAtivos: ativosNoCurso, updatedAt: Timestamp.now() }, { merge: true });
+      console.log(`  ${APPLY ? '' : '(simulação) '}${nome}: eventos ativos ${cursoAtual.totalEventosAtivos}→${ativosNoCurso} | totalEventos ${cursoAtual.totalEventos}→${eventosSnap.size}`);
     }
   }
 

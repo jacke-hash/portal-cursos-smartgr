@@ -309,7 +309,7 @@ async function backfill() {
     }
 
     await cursoRef.update({
-      totalInscritos, totalEventos: eventos.length, proximoEventoLabel, updatedAt: Timestamp.now(),
+      totalInscritos, totalEventos: eventos.length, totalEventosAtivos: eventos.filter(e => e.ativo === true).length, proximoEventoLabel, updatedAt: Timestamp.now(),
     });
     console.log(`  curso ${productId}: totalInscritos=${totalInscritos} totalEventos=${eventos.length} proximoEventoLabel="${proximoEventoLabel}"`);
   }
