@@ -27,6 +27,6 @@ jobs:
         run: npm ci
 
       - name: Executar reconciliação
-        run: node scripts/recalc-agregados.mjs
+        run: node scripts/recalc-agregados.mjs --apply
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}

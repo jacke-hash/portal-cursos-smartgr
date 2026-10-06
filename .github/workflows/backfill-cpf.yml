@@ -44,7 +44,7 @@ jobs:
           echo "from=$FROM" >> "$GITHUB_OUTPUT"
 
       - name: Executar backfill de CPF
-        run: node scripts/backfill-cpf.mjs --from=${{ steps.janela.outputs.from }} ${{ github.event.inputs.to && format('--to={0}', github.event.inputs.to) || '' }}
+        run: node scripts/backfill-cpf.mjs --from=${{ steps.janela.outputs.from }} ${{ github.event.inputs.to && format('--to={0}', github.event.inputs.to) || '' }} --apply
         env:
           SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}

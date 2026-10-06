@@ -4,7 +4,10 @@
 // Busca os pedidos da Shopify em lote (por created_at) em vez de 1 chamada por
 // inscrito, depois casa por shopifyId e faz patch só onde o valor mudou.
 //
-// Uso: node scripts/backfill-formacao.mjs [--from=2026-08-01] [--to=2026-09-24]
+// A lista de cursos vem da coleção `cursos` do Firestore (shared/cursos.mjs).
+// Sem --apply é SIMULAÇÃO (lista o que seria gravado); grava de fato só com --apply.
+//
+// Uso: node scripts/backfill-formacao.mjs [--from=2026-08-01] [--to=2026-09-24] [--apply]
 // Sem argumentos: de 2026-08-01 até hoje.
 
 import 'dotenv/config';
@@ -13,6 +16,8 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { loadCursos } from '../shared/cursos.mjs';
+import { APPLY, avisoSimulacao } from '../shared/cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,25 +34,6 @@ const SHOPIFY_BASE = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}`
 const sa = JSON.parse(readFileSync(join(__dirname, '..', 'service-account.json'), 'utf8'));
 initializeApp({ credential: cert(sa) });
 const db = getFirestore();
-
-const KNOWN_COURSES = new Map([
-  [8821788115101, 'Treinamento Prático - Prisma Peeling'],
-  [8821788180637, 'Treinamento Presencial - Protocolo Peptídeos'],
-  [8701283827869, 'Terapias Médicas Baseadas em Eletroporação'],
-  [8680458551453, 'Treinamento Presencial de Microagulhamento'],
-  [8955598438557, 'Presencial - Pocket Microagulhamento'],
-  [8695759601821, 'SMART DAY'],
-  [8928830193821, '8° Congresso'],
-  [8958883791005, 'Smart Tecnologias - Atualização sobre equipamentos na Medicina Estética'],
-  [8958133764253, 'Treinamento Prático: Protocolos Capilares na era de Canetas Emagrecedoras'],
-  [8958132125853, 'Treinamento Prático: Agregando tratamentos de Sobrancelhas & Lábios'],
-  [8958130454685, 'Treinamento Prático: Prisma Peeling - K Beauty no Gerenciamento de Cicatrizes'],
-  [8957017981085, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
-  [8956248555677, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
-  [8956141568157, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Caxias do Sul'],
-  [8680460517533, 'Treinamento Presencial Limpeza de Pele'],
-  [8992580731037, 'Prisma Peeling - A Tecnologia do Gerenciamento da Pele Curso Exclusivo com Juliana Gorreri'],
-]);
 
 function shopifyHeaders() {
   return { 'X-Shopify-Access-Token': SHOPIFY_TOKEN };
@@ -99,6 +85,7 @@ function extractFormacaoInfo(attributes) {
 }
 
 async function main() {
+  const cursos = await loadCursos(db);
   console.log(`Janela: ${FROM.toISOString()} → ${TO.toISOString()}`);
   console.log('\nBuscando pedidos da Shopify no período (status=any)...');
   const firstUrl = `${SHOPIFY_BASE}/orders.json?status=any&limit=250&created_at_min=${FROM.toISOString()}&created_at_max=${TO.toISOString()}&fields=id,note_attributes`;
@@ -112,7 +99,7 @@ async function main() {
 
   let totalInscritos = 0, atualizados = 0, semPedidoNoPeriodo = 0, semMudanca = 0;
 
-  for (const productId of KNOWN_COURSES.keys()) {
+  for (const productId of cursos.keys()) {
     const eventosSnap = await db.collection('cursos').doc(String(productId)).collection('eventos').get();
     for (const eventoDoc of eventosSnap.docs) {
       const inscritosSnap = await eventoDoc.ref.collection('inscritos').get();
@@ -124,14 +111,15 @@ async function main() {
         const { perfil: novoPerfil, formacao: novaFormacao } = infoById.get(data.shopifyId);
         if (novaFormacao === (data.formacao || '') && novoPerfil === (data.perfil || '')) { semMudanca++; continue; }
 
-        await doc.ref.set({ formacao: novaFormacao, perfil: novoPerfil, updatedAt: Timestamp.now() }, { merge: true });
-        console.log(`  ${productId}/${eventoDoc.id}/${doc.id}: perfil="${data.perfil || ''}"→"${novoPerfil}" formacao="${data.formacao || ''}"→"${novaFormacao}"`);
+        if (APPLY) await doc.ref.set({ formacao: novaFormacao, perfil: novoPerfil, updatedAt: Timestamp.now() }, { merge: true });
+        console.log(`  ${APPLY ? '' : '(simulação) '}${productId}/${eventoDoc.id}/${doc.id}: perfil="${data.perfil || ''}"→"${novoPerfil}" formacao="${data.formacao || ''}"→"${novaFormacao}"`);
         atualizados++;
       }
     }
   }
 
   console.log(`\nInscritos varridos: ${totalInscritos} | atualizados: ${atualizados} | fora do período: ${semPedidoNoPeriodo} | sem mudança: ${semMudanca}`);
+  avisoSimulacao();
   process.exit(0);
 }
 

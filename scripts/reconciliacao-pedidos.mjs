@@ -8,6 +8,8 @@
  * inscrito correspondente no Firestore, e alerta por e-mail (Resend).
  *
  * Somente leitura: nunca grava/altera nada no Firestore.
+ * A lista de cursos monitorados vem da coleção `cursos` do Firestore
+ * (shared/cursos.mjs) — aborta se não conseguir carregá-la.
  *
  * Execução manual:
  *   node scripts/reconciliacao-pedidos.mjs
@@ -20,6 +22,7 @@
 
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { loadCursos } from '../shared/cursos.mjs';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -47,34 +50,6 @@ if (!SHOPIFY_TOKEN) {
   console.error('SHOPIFY_ACCESS_TOKEN não encontrado no ambiente');
   process.exit(1);
 }
-
-// ----------------------------------------------------------------
-// KNOWN_COURSES / VALID_PRODUCT_IDS — lidos direto do worker,
-// nunca hardcodados aqui, para não divergir da fonte real.
-// ----------------------------------------------------------------
-
-function lerCatalogoDoWorker() {
-  const workerPath = resolve(__dirname, '../workers/shopify-webhook/src/index.js');
-  const src = readFileSync(workerPath, 'utf8');
-  const bloco = src.match(/const KNOWN_COURSES = new Map\(\[([\s\S]*?)\]\);/);
-  if (!bloco) {
-    throw new Error(
-      `Não foi possível extrair KNOWN_COURSES de ${workerPath}. ` +
-      `O formato do array pode ter mudado — ajuste o regex em lerCatalogoDoWorker().`
-    );
-  }
-  const entradas = [...bloco[1].matchAll(/\[\s*(\d+)\s*,\s*'((?:[^'\\]|\\.)*)'\s*\]/g)]
-    .map(m => [Number(m[1]), m[2].replace(/\\'/g, "'")]);
-  if (entradas.length === 0) {
-    throw new Error('KNOWN_COURSES foi encontrado mas nenhuma entrada foi parseada — regex desatualizado.');
-  }
-  return new Map(entradas);
-}
-
-const KNOWN_COURSES = lerCatalogoDoWorker();
-const VALID_PRODUCT_IDS = new Set(KNOWN_COURSES.keys());
-
-console.log(`Catálogo lido do worker: ${KNOWN_COURSES.size} produto(s) monitorado(s)`);
 
 // ----------------------------------------------------------------
 // FIREBASE — mesmo padrão de credenciais do sync-google-sheets.mjs
@@ -137,6 +112,7 @@ async function buscarPedidosPagosRecentes(sinceIso) {
 // ----------------------------------------------------------------
 
 async function reconciliar() {
+  const cursos = await loadCursos(db);
   const desde = new Date(Date.now() - WINDOW_HOURS * 60 * 60 * 1000);
   console.log(`\n=== Reconciliação de pedidos — janela: últimas ${WINDOW_HOURS}h (desde ${desde.toISOString()}) ===\n`);
 
@@ -151,12 +127,13 @@ async function reconciliar() {
   for (const order of pedidosAtivos) {
     for (const item of order.line_items || []) {
       const productId = Number(item.product_id);
-      if (!VALID_PRODUCT_IDS.has(productId)) continue;
+      if (!cursos.has(productId)) continue;
       if (!item.variant_id) continue; // sem variant_id não há path determinístico a checar
       relevantes.push({
         orderId: order.id,
         orderName: order.name,
         productId,
+        nomeCurso: cursos.get(productId).nome,
         variantId: String(item.variant_id),
         variantTitle: item.variant_title,
         price: item.price,
@@ -177,7 +154,7 @@ async function reconciliar() {
 
   console.log(`\nPedidos ausentes no Firestore: ${ausentes.length}`);
   for (const a of ausentes) {
-    console.log(`  ${a.orderName} | produto=${KNOWN_COURSES.get(a.productId) || a.productId} | variant_id=${a.variantId} | title="${a.variantTitle}" | valor=${a.price} | ${a.createdAt}`);
+    console.log(`  ${a.orderName} | produto=${a.nomeCurso || a.productId} | variant_id=${a.variantId} | title="${a.variantTitle}" | valor=${a.price} | ${a.createdAt}`);
   }
 
   return ausentes;
@@ -190,7 +167,7 @@ async function reconciliar() {
 function montarEmailHtml(ausentes) {
   const linhas = ausentes.map(a => {
     const valor = (parseFloat(a.price) || 0) * (a.quantity || 1);
-    const nomeProduto = KNOWN_COURSES.get(a.productId) || String(a.productId);
+    const nomeProduto = a.nomeCurso || String(a.productId);
     const linkShopify = `https://admin.shopify.com/store/smart-gr-pro/orders/${a.orderId}`;
     return `
       <tr>
@@ -226,7 +203,7 @@ function montarEmailHtml(ausentes) {
 function montarEmailTexto(ausentes) {
   const linhas = ausentes.map(a => {
     const valor = (parseFloat(a.price) || 0) * (a.quantity || 1);
-    const nomeProduto = KNOWN_COURSES.get(a.productId) || String(a.productId);
+    const nomeProduto = a.nomeCurso || String(a.productId);
     return `- ${a.orderName} | ${nomeProduto} | variant_id=${a.variantId} | R$ ${valor.toFixed(2)} | ${a.createdAt} | https://admin.shopify.com/store/smart-gr-pro/orders/${a.orderId}`;
   }).join('\n');
   return `Portal Cursos: ${ausentes.length} pedido(s) pago(s) sem inscrito correspondente\n\n${linhas}\n`;

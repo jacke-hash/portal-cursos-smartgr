@@ -1,6 +1,8 @@
 // Reprocessa um pedido específico da Shopify e atualiza o inscrito correspondente
 // no Firestore, usando current_quantity (quantidade pós-edição/reembolso).
-// Uso: node scripts/reprocess-order.mjs SPFY23673
+// A lista de cursos vem da coleção `cursos` do Firestore (shared/cursos.mjs).
+// Sem --apply é SIMULAÇÃO (mostra o que seria gravado); grava de fato só com --apply.
+// Uso: node scripts/reprocess-order.mjs SPFY23673 [--apply]
 
 import 'dotenv/config';
 import { readFileSync } from 'fs';
@@ -8,11 +10,13 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { loadCursos } from '../shared/cursos.mjs';
+import { APPLY, avisoSimulacao } from '../shared/cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const orderName = process.argv[2];
+const orderName = process.argv.slice(2).find(a => !a.startsWith('--'));
 if (!orderName) {
-  console.error('Uso: node scripts/reprocess-order.mjs <NomeDoPedido, ex: SPFY23673>');
+  console.error('Uso: node scripts/reprocess-order.mjs <NomeDoPedido, ex: SPFY23673> [--apply]');
   process.exit(1);
 }
 
@@ -24,26 +28,6 @@ const SHOPIFY_BASE = `https://${SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}`
 const sa = JSON.parse(readFileSync(join(__dirname, '..', 'service-account.json'), 'utf8'));
 initializeApp({ credential: cert(sa) });
 const db = getFirestore();
-
-const KNOWN_COURSES = new Map([
-  [8821788115101, 'Treinamento Prático - Prisma Peeling'],
-  [8821788180637, 'Treinamento Presencial - Protocolo Peptídeos'],
-  [8701283827869, 'Terapias Médicas Baseadas em Eletroporação'],
-  [8680458551453, 'Treinamento Presencial de Microagulhamento'],
-  [8955598438557, 'Presencial - Pocket Microagulhamento'],
-  [8695759601821, 'SMART DAY'],
-  [8928830193821, '8° Congresso'],
-  [8958883791005, 'Smart Tecnologias - Atualização sobre equipamentos na Medicina Estética'],
-  [8958133764253, 'Treinamento Prático: Protocolos Capilares na era de Canetas Emagrecedoras'],
-  [8958132125853, 'Treinamento Prático: Agregando tratamentos de Sobrancelhas & Lábios'],
-  [8958130454685, 'Treinamento Prático: Prisma Peeling - K Beauty no Gerenciamento de Cicatrizes'],
-  [8957017981085, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
-  [8956248555677, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
-  [8956141568157, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Caxias do Sul'],
-  [8680460517533, 'Treinamento Presencial Limpeza de Pele'],
-  [8992580731037, 'Prisma Peeling - A Tecnologia do Gerenciamento da Pele Curso Exclusivo com Juliana Gorreri'],
-]);
-const VALID_PRODUCT_IDS = new Set(KNOWN_COURSES.keys());
 
 function parseVariantTitle(title) {
   if (!title || typeof title !== 'string') return null;
@@ -104,6 +88,8 @@ async function recalcCurso(productId) {
 }
 
 async function main() {
+  const cursos = await loadCursos(db);
+
   console.log(`Buscando pedido ${orderName} na Shopify...`);
   const resp = await fetch(
     `${SHOPIFY_BASE}/orders.json?name=${encodeURIComponent(orderName)}&status=any`,
@@ -121,7 +107,7 @@ async function main() {
   const affected = [];
   for (const item of order.line_items || []) {
     const productId = Number(item.product_id);
-    if (!VALID_PRODUCT_IDS.has(productId) || !item.variant_id || !item.variant_title) continue;
+    if (!cursos.has(productId) || !item.variant_id || !item.variant_title) continue;
 
     const parsed = parseVariantTitle(item.variant_title);
     if (!parsed) continue;
@@ -138,9 +124,9 @@ async function main() {
     }
 
     const fin = calcFinancials(item, order);
-    console.log(`  ${path}: quantidade ${snap.data().quantidade} → ${fin.quantidade} | valorFinalPago ${snap.data().valorFinalPago} → ${fin.valorFinalPago}`);
+    console.log(`  ${APPLY ? '' : '(simulação) '}${path}: quantidade ${snap.data().quantidade} → ${fin.quantidade} | valorFinalPago ${snap.data().valorFinalPago} → ${fin.valorFinalPago}`);
 
-    await ref.set({ ...fin, valor: fin.valorFinalPago, updatedAt: Timestamp.now() }, { merge: true });
+    if (APPLY) await ref.set({ ...fin, valor: fin.valorFinalPago, updatedAt: Timestamp.now() }, { merge: true });
     affected.push({ productId, variantId });
   }
 
@@ -149,11 +135,12 @@ async function main() {
     const key = `${productId}:${variantId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    await recalcEvento(productId, variantId);
-    await recalcCurso(productId);
+    if (APPLY) await recalcEvento(productId, variantId);
+    if (APPLY) await recalcCurso(productId);
   }
 
-  console.log(`\n${affected.length} inscrição(ões) reprocessada(s).`);
+  console.log(`\n${affected.length} inscrição(ões) ${APPLY ? 'reprocessada(s)' : 'seriam reprocessada(s)'}.`);
+  avisoSimulacao();
   process.exit(0);
 }
 

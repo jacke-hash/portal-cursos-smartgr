@@ -8,7 +8,10 @@
 // atualizar via webhook deixava o número parado (ex.: 101 salvo, Shopify já
 // em 50 por causa de pedidos marcados como "comprometido"/fulfillment).
 //
-// Uso: node scripts/sync-capacidade.mjs
+// A lista de cursos vem da coleção `cursos` do Firestore (shared/cursos.mjs).
+//
+// Uso: node scripts/sync-capacidade.mjs            # simulação: lista o que seria gravado
+//      node scripts/sync-capacidade.mjs --apply    # grava de fato
 
 import 'dotenv/config';
 import { readFileSync } from 'fs';
@@ -16,6 +19,8 @@ import { fileURLToPath } from 'url';
 import { resolve, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { loadCursos } from '../shared/cursos.mjs';
+import { APPLY, avisoSimulacao } from '../shared/cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -37,29 +42,11 @@ function lerServiceAccount() {
 initializeApp({ credential: cert(lerServiceAccount()) });
 const db = getFirestore();
 
-const KNOWN_COURSES = new Map([
-  [8821788115101, 'Treinamento Prático - Prisma Peeling'],
-  [8821788180637, 'Treinamento Presencial - Protocolo Peptídeos'],
-  [8701283827869, 'Terapias Médicas Baseadas em Eletroporação'],
-  [8680458551453, 'Treinamento Presencial de Microagulhamento'],
-  [8955598438557, 'Presencial - Pocket Microagulhamento'],
-  [8695759601821, 'SMART DAY'],
-  [8928830193821, '8° Congresso'],
-  [8958883791005, 'Smart Tecnologias - Atualização sobre equipamentos na Medicina Estética'],
-  [8958133764253, 'Treinamento Prático: Protocolos Capilares na era de Canetas Emagrecedoras'],
-  [8958132125853, 'Treinamento Prático: Agregando tratamentos de Sobrancelhas & Lábios'],
-  [8958130454685, 'Treinamento Prático: Prisma Peeling - K Beauty no Gerenciamento de Cicatrizes'],
-  [8957017981085, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
-  [8956248555677, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Porto Alegre'],
-  [8956141568157, 'Treinamento Presencial de Microagulhamento + Prisma Peeling em Caxias do Sul'],
-  [8680460517533, 'Treinamento Presencial Limpeza de Pele'],
-  [8992580731037, 'Prisma Peeling - A Tecnologia do Gerenciamento da Pele Curso Exclusivo com Juliana Gorreri'],
-]);
-
 async function main() {
+  const cursos = await loadCursos(db);
   let atualizados = 0, semEvento = 0, semNumero = 0;
 
-  for (const [productId, nome] of KNOWN_COURSES) {
+  for (const [productId, { nome }] of cursos) {
     const resp = await fetch(`${SHOPIFY_BASE}/products/${productId}/variants.json?limit=250`, {
       headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN },
     });
@@ -80,13 +67,14 @@ async function main() {
       // sentido bater Firestore (e disparar o listener em tela) à toa.
       if (snap.data().capacidadeDisponivel === variant.inventory_quantity) continue;
 
-      await eventoRef.set({ capacidadeDisponivel: variant.inventory_quantity, updatedAt: Timestamp.now() }, { merge: true });
-      console.log(`  ✓ ${variant.title}: capacidadeDisponivel = ${variant.inventory_quantity}`);
+      if (APPLY) await eventoRef.set({ capacidadeDisponivel: variant.inventory_quantity, updatedAt: Timestamp.now() }, { merge: true });
+      console.log(`  ${APPLY ? '' : '(simulação) '}✓ ${variant.title}: capacidadeDisponivel = ${variant.inventory_quantity}`);
       atualizados++;
     }
   }
 
   console.log(`\nAtualizados: ${atualizados} | sem evento no Firestore: ${semEvento} | sem número de estoque: ${semNumero}`);
+  avisoSimulacao();
   process.exit(0);
 }
 
