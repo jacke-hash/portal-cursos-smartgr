@@ -56,7 +56,7 @@ const DEFAULT_INSCRITO_FILTERS = Object.freeze({
   status: "", vendedor: "", variante: "", impresso: "", inativos: "", valor: "",
   // Filtros disparados por clique nos painéis de analytics (cidade, estado,
   // perfil, profissão). `formacao` guarda "escopo::nome" (ver matchStatFilter).
-  cidade: "", estado: "", perfil: "", formacao: "",
+  cidade: "", estado: "", perfil: "", formacao: "", qtd: "",
 });
 
 // Direção padrão ao trocar a chave de ordenação dos cursos — cada opção já
@@ -886,6 +886,15 @@ function _titleCaseName(name) {
     .join(" ");
 }
 
+// Identifica o comprador pra somar pedidos da mesma pessoa.
+function compradorKey(i) {
+  const email = String(i.email || "").trim().toLowerCase();
+  if (email) return `e:${email}`;
+  const cpf = normalizeDigits(i.cpf);
+  if (cpf) return `c:${cpf}`;
+  return `p:${i.pedido || i.id}`;
+}
+
 // Painel executivo: conta ingressos (quantidade) e não apenas pedidos.
 function eventoInsights() {
   const ativos = state.inscritos.filter(isInscritoAtivo);
@@ -932,6 +941,19 @@ function eventoInsights() {
   const estados = agrupar(ativos, "estado", "Não informado");
   const cidades = agrupar(ativos, "cidade", "Não informado");
 
+  // Ingressos por comprador: agrupa pedidos da mesma pessoa (e-mail, senão CPF,
+  // senão o próprio pedido) e conta quantas pessoas compraram 1, 2, 3... ingressos.
+  const porComprador = new Map();
+  ativos.forEach((i) => {
+    const chave = compradorKey(i);
+    porComprador.set(chave, (porComprador.get(chave) || 0) + quantidade(i));
+  });
+  const contagemQtd = new Map();
+  porComprador.forEach((qtd) => contagemQtd.set(qtd, (contagemQtd.get(qtd) || 0) + 1));
+  const ingressosPorPessoa = [...contagemQtd.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([qtd, pessoas]) => ({ nome: `${qtd} ingresso${qtd !== 1 ? "s" : ""}`, total: pessoas, filtro: String(qtd) }));
+
   const publicoTotais = {
     profissional: somaQuantidade(profissionais),
     estudante:    somaQuantidade(estudantes),
@@ -972,6 +994,7 @@ function eventoInsights() {
     },
     vendedores,
     regiao: { estados, cidades },
+    ingressosPorPessoa,
   };
 }
 
@@ -981,7 +1004,7 @@ const _pctChip = (pct) => `<span class="pct-chip">${pct}%</span>`;
 const _statCount = (n) => `<span class="stat-count">${n}</span>`;
 
 
-function _donutChart(grupo, expanded, grupoKey) {
+function _donutChart(grupo, expanded, grupoKey, filterKey = null) {
   const LIMITE = 6;
   const limite = expanded ? grupo.length : LIMITE;
   const top = grupo.slice(0, limite);
@@ -1000,8 +1023,13 @@ function _donutChart(grupo, expanded, grupoKey) {
 
   const legenda = items.map((item, idx) => {
     const pct = totalGeral ? Math.round((item.total / totalGeral) * 100) : 0;
+    const alvo = item.nome === "Outras categorias" ? null : _statFilterTarget(filterKey, item);
+    const ativo = alvo && state.filters[alvo.campo] === alvo.valor;
+    const filtroAttrs = alvo
+      ? ` data-action="stat-filter" data-filter-field="${alvo.campo}" data-filter-value="${String(alvo.valor).replace(/"/g, "&quot;")}" title="Filtrar inscritos: ${String(item.nome).replace(/"/g, "&quot;")}"`
+      : "";
     return `
-    <div class="donut-legend-row">
+    <div class="donut-legend-row${alvo ? " formation-row--filterable" : ""}${ativo ? " formation-row--active" : ""}"${filtroAttrs}>
       <span class="donut-swatch" style="background:${AUDIENCE_PALETTE[idx % AUDIENCE_PALETTE.length]}"></span>
       <span title="${item.nome}">${item.nome}</span>
       <b>${_statCount(item.total)}${_pctChip(pct)}</b>
@@ -1033,7 +1061,7 @@ function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4, su
   const view = state.statsView[grupoKey] || { chart: "bar", expanded: false, expandedSub: new Set() };
   const outroModo = view.chart === "bar" ? "donut" : "bar";
   const localTotal = grupo.reduce((soma, item) => soma + item.total, 0);
-  const body = view.chart === "donut" ? _donutChart(grupo, view.expanded, grupoKey) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault, subBreakdown, view.expandedSub, filterKey);
+  const body = view.chart === "donut" ? _donutChart(grupo, view.expanded, grupoKey, filterKey) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault, subBreakdown, view.expandedSub, filterKey);
   const headerPct = pctBase ? Math.round((localTotal / pctBase) * 100) : null;
   return `
     <div class="audience-group">
@@ -1058,7 +1086,7 @@ function _statFilterTarget(filterKey, item) {
 }
 
 function _statList(grupo, expanded, grupoKey, localTotal, limitDefault, subBreakdown, expandedSub, filterKey = null) {
-  const max = grupo[0]?.total || 1;
+  const max = Math.max(1, ...grupo.map((g) => g.total));
   const limite = expanded ? grupo.length : limitDefault;
   const topo = grupo.slice(0, limite);
   const outras = Math.max(0, grupo.length - topo.length);
@@ -1161,6 +1189,11 @@ function eventoAnalyticsContent() {
           ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6, null, "vendedor")}
         </article>
         <article class="analytics-panel">
+          <div class="event-panel-heading"><div><span class="event-kpi-label">Ingressos por pessoa</span><strong>${insights.ingressosPorPessoa.reduce((s, g) => s + g.total, 0)} pessoas</strong></div><span class="event-panel-caption">pagos</span></div>
+          ${_statGroup("Quantos ingressos cada pessoa comprou", "qtd", insights.ingressosPorPessoa, null, 6, null, "qtd")}
+          <p class="stat-hint">Clique numa linha para ver só quem comprou essa quantidade.</p>
+        </article>
+        <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
           ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5, especialidades, "formacao:prescritores")}
         </article>
@@ -1197,7 +1230,7 @@ function eventoAnalyticsContent() {
     </section>`;
 }
 
-const STAT_FILTER_LABELS = { cidade: "Cidade", estado: "Estado", perfil: "Perfil", formacao: "Profissão", vendedor: "Vendedor" };
+const STAT_FILTER_LABELS = { cidade: "Cidade", estado: "Estado", perfil: "Perfil", formacao: "Profissão", vendedor: "Vendedor", qtd: "Ingressos por pessoa" };
 const PERFIL_FILTER_LABELS = { profissional: "Profissional", estudante: "Estudante", consumidor: "Consumidor final", semPerfil: "Não informado" };
 
 // Chips dos filtros vindos dos painéis de analytics, com ✕ pra remover cada um.
@@ -1207,6 +1240,7 @@ function activeStatFiltersContent() {
     .map((campo) => {
       const v = state.filters[campo];
       const texto = campo === "perfil" ? (PERFIL_FILTER_LABELS[v] || v)
+        : campo === "qtd" ? `${v} ingresso${v !== "1" ? "s" : ""}`
         : campo === "formacao" ? v.split("::")[1] + (v.startsWith("prescritores::") ? " (prescritor)" : "")
         : v;
       return `<span class="stat-filter-chip">${STAT_FILTER_LABELS[campo]}: <b>${texto}</b><button type="button" data-action="remove-stat-filter" data-filter-field="${campo}" title="Remover filtro">✕</button></span>`;
@@ -1604,6 +1638,11 @@ function filteredInscritos() {
   if (state.filters.cidade)   list = list.filter(i => (String(i.cidade || "").trim() || "Não informado") === state.filters.cidade);
   if (state.filters.estado)   list = list.filter(i => (String(i.estado || "").trim() || "Não informado") === state.filters.estado);
   if (state.filters.perfil)   list = list.filter(i => (["profissional", "estudante", "consumidor"].includes(i.perfil) ? i.perfil : "semPerfil") === state.filters.perfil);
+  if (state.filters.qtd) {
+    const totais = new Map();
+    state.inscritos.filter(isInscritoAtivo).forEach(i => totais.set(compradorKey(i), (totais.get(compradorKey(i)) || 0) + Math.max(1, Number(i.quantidade) || 1)));
+    list = list.filter(i => String(totais.get(compradorKey(i))) === state.filters.qtd);
+  }
   if (state.filters.formacao) {
     const [escopo, nome] = state.filters.formacao.split("::");
     list = list.filter(i => {
@@ -1909,6 +1948,9 @@ function handleClick(e) {
       state.page = 1;
       saveNav();
       eventoViewPartialUpdate();
+      // A tabela fica abaixo dos painéis — leva a tela até o resultado
+      // filtrado, senão o clique parece não ter feito nada.
+      if (state.filters[campo]) root.querySelector(".filters-toolbar")?.scrollIntoView({ behavior: "smooth", block: "start" });
     } else if (action === "remove-stat-filter") {
       state.filters[el.dataset.filterField] = "";
       state.page = 1;
