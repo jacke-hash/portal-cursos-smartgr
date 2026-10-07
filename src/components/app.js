@@ -54,6 +54,9 @@ const TABLE_COL_COUNT = 9;
 // inativos num estado inconsistente após certas navegações.
 const DEFAULT_INSCRITO_FILTERS = Object.freeze({
   status: "", vendedor: "", variante: "", impresso: "", inativos: "", valor: "",
+  // Filtros disparados por clique nos painéis de analytics (cidade, estado,
+  // perfil, profissão). `formacao` guarda "escopo::nome" (ver matchStatFilter).
+  cidade: "", estado: "", perfil: "", formacao: "",
 });
 
 // Direção padrão ao trocar a chave de ordenação dos cursos — cada opção já
@@ -937,10 +940,10 @@ function eventoInsights() {
     prescritor:   somaQuantidade(prescritores),
   };
   const publicoOverview = [
-    { nome: "Profissional", total: publicoTotais.profissional },
-    { nome: "Estudante", total: publicoTotais.estudante },
-    { nome: "Consumidor final", total: publicoTotais.consumidor },
-    ...(publicoTotais.semPerfil ? [{ nome: "Não informado", total: publicoTotais.semPerfil }] : []),
+    { nome: "Profissional", total: publicoTotais.profissional, filtro: "profissional" },
+    { nome: "Estudante", total: publicoTotais.estudante, filtro: "estudante" },
+    { nome: "Consumidor final", total: publicoTotais.consumidor, filtro: "consumidor" },
+    ...(publicoTotais.semPerfil ? [{ nome: "Não informado", total: publicoTotais.semPerfil, filtro: "semPerfil" }] : []),
   ].filter((g) => g.total > 0).sort((a, b) => b.total - a.total);
 
   // Valor: pago (valorPago > 0) vs grátis (0 ou não informado) — contagem
@@ -1026,11 +1029,11 @@ function _donutChart(grupo, expanded, grupoKey) {
 // subitens (ex.: "Médico" -> especialidades) — só usado no modo lista (a
 // rosca não representa hierarquia); linhas sem entrada nesse mapa ficam
 // como texto simples, sem seta de expandir.
-function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4, subBreakdown = null) {
+function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4, subBreakdown = null, filterKey = null) {
   const view = state.statsView[grupoKey] || { chart: "bar", expanded: false, expandedSub: new Set() };
   const outroModo = view.chart === "bar" ? "donut" : "bar";
   const localTotal = grupo.reduce((soma, item) => soma + item.total, 0);
-  const body = view.chart === "donut" ? _donutChart(grupo, view.expanded, grupoKey) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault, subBreakdown, view.expandedSub);
+  const body = view.chart === "donut" ? _donutChart(grupo, view.expanded, grupoKey) : _statList(grupo, view.expanded, grupoKey, localTotal, limitDefault, subBreakdown, view.expandedSub, filterKey);
   const headerPct = pctBase ? Math.round((localTotal / pctBase) * 100) : null;
   return `
     <div class="audience-group">
@@ -1045,12 +1048,26 @@ function _statGroup(label, grupoKey, grupo, pctBase = null, limitDefault = 4, su
     </div>`;
 }
 
-function _statList(grupo, expanded, grupoKey, localTotal, limitDefault, subBreakdown, expandedSub) {
+// Valor do filtro de uma linha do painel. `filterKey` é "campo" ou
+// "formacao:escopo" (escopo = profissional | estudante | prescritores).
+function _statFilterTarget(filterKey, item) {
+  if (!filterKey) return null;
+  const [campo, escopo] = filterKey.split(":");
+  const valor = campo === "formacao" ? `${escopo}::${item.nome}` : (item.filtro ?? item.nome);
+  return { campo, valor };
+}
+
+function _statList(grupo, expanded, grupoKey, localTotal, limitDefault, subBreakdown, expandedSub, filterKey = null) {
   const max = grupo[0]?.total || 1;
   const limite = expanded ? grupo.length : limitDefault;
   const topo = grupo.slice(0, limite);
   const outras = Math.max(0, grupo.length - topo.length);
   const row = (item) => {
+    const alvo = _statFilterTarget(filterKey, item);
+    const ativo = alvo && state.filters[alvo.campo] === alvo.valor;
+    const filtroAttrs = alvo
+      ? ` data-action="stat-filter" data-filter-field="${alvo.campo}" data-filter-value="${String(alvo.valor).replace(/"/g, "&quot;")}" title="Filtrar inscritos: ${String(item.nome).replace(/"/g, "&quot;")}"`
+      : "";
     const pct = localTotal ? Math.round((item.total / localTotal) * 100) : 0;
     const sub = subBreakdown?.[item.nome];
     const expandable = !!sub && sub.length > 0;
@@ -1060,7 +1077,7 @@ function _statList(grupo, expanded, grupoKey, localTotal, limitDefault, subBreak
            <span class="formation-chevron${aberta ? " formation-chevron--open" : ""}">${icon.chevronLeft(9)}</span>${item.nome}
          </button>`
       : `<span class="formation-name" title="${item.nome}">${item.nome}</span>`;
-    const linhaPrincipal = `<div class="formation-row">${nomeCell}<div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${_statCount(item.total)}${_pctChip(pct)}</b></div>`;
+    const linhaPrincipal = `<div class="formation-row${alvo ? " formation-row--filterable" : ""}${ativo ? " formation-row--active" : ""}"${filtroAttrs}>${nomeCell}<div class="formation-track"><i style="width:${Math.max(8, Math.round((item.total / max) * 100))}%"></i></div><b>${_statCount(item.total)}${_pctChip(pct)}</b></div>`;
     const subLista = aberta
       ? `<div class="formation-sublist">${sub.map((s) => {
           const subPct = item.total ? Math.round((s.total / item.total) * 100) : 0;
@@ -1109,7 +1126,7 @@ function eventoDashboardContent(stats) {
       </article>
       <article class="event-audience">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Por perfil", "publico", insights.publico.overview, null, 4)}
+        ${_statGroup("Por perfil", "publico", insights.publico.overview, null, 4, null, "perfil")}
       </article>
       <article class="event-kpi event-kpi--leader">
         <span class="event-kpi-label">Quem mais vendeu</span>
@@ -1141,25 +1158,25 @@ function eventoAnalyticsContent() {
       <div class="analytics-col">
         <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Vendedores</span><strong>${insights.vendedores.length} vendedor${insights.vendedores.length !== 1 ? "es" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-          ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6)}
+          ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6, null, "vendedor")}
         </article>
         <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Prescritores</span><strong>${prescritores.total} ingresso${prescritores.total !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-          ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5, especialidades)}
+          ${_statGroup("Por profissão", "prescritores", prescritores.formacoes, insights.ingressos, 5, especialidades, "formacao:prescritores")}
         </article>
       </div>
       <article class="analytics-panel">
         <div class="event-panel-heading"><div><span class="event-kpi-label">Público por perfil</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos, 4, especialidades)}
-        ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos)}
+        ${_statGroup("Profissionais", "profissional", profissional.formacoes, insights.ingressos, 4, especialidades, "formacao:profissional")}
+        ${_statGroup("Estudantes", "estudante", estudante.formacoes, insights.ingressos, 4, null, "formacao:estudante")}
         <div class="audience-group audience-group--flat"><span>Consumidor final</span><b>${_statCount(consumidor.total)}${_pctChip(pctConsumidor)}</b></div>
         ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
       </article>
       <div class="analytics-col">
         <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Região</span><strong>${insights.ingressos} ingresso${insights.ingressos !== 1 ? "s" : ""}</strong></div><span class="event-panel-caption">pagos</span></div>
-          ${_statGroup("Por estado", "estado", insights.regiao.estados, null, 5)}
-          ${_statGroup("Por cidade", "cidade", insights.regiao.cidades, null, 5)}
+          ${_statGroup("Por estado", "estado", insights.regiao.estados, null, 5, null, "estado")}
+          ${_statGroup("Por cidade", "cidade", insights.regiao.cidades, null, 5, null, "cidade")}
         </article>
         <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Valor</span><strong>${money.format(insights.valor.total)}</strong></div><span class="event-panel-caption">pagos</span></div>
@@ -1180,8 +1197,25 @@ function eventoAnalyticsContent() {
     </section>`;
 }
 
+const STAT_FILTER_LABELS = { cidade: "Cidade", estado: "Estado", perfil: "Perfil", formacao: "Profissão", vendedor: "Vendedor" };
+const PERFIL_FILTER_LABELS = { profissional: "Profissional", estudante: "Estudante", consumidor: "Consumidor final", semPerfil: "Não informado" };
+
+// Chips dos filtros vindos dos painéis de analytics, com ✕ pra remover cada um.
+function activeStatFiltersContent() {
+  return Object.keys(STAT_FILTER_LABELS)
+    .filter((campo) => state.filters[campo])
+    .map((campo) => {
+      const v = state.filters[campo];
+      const texto = campo === "perfil" ? (PERFIL_FILTER_LABELS[v] || v)
+        : campo === "formacao" ? v.split("::")[1] + (v.startsWith("prescritores::") ? " (prescritor)" : "")
+        : v;
+      return `<span class="stat-filter-chip">${STAT_FILTER_LABELS[campo]}: <b>${texto}</b><button type="button" data-action="remove-stat-filter" data-filter-field="${campo}" title="Remover filtro">✕</button></span>`;
+    }).join("");
+}
+
 function _filtersBar(vendedores, variantes) {
   return `
+    <div id="active-stat-filters" class="active-stat-filters">${activeStatFiltersContent()}</div>
     <div class="filters-bar">
       <div class="filter-wrap filter-wrap--grow">
         <span class="filter-icon">${icon.search()}</span>
@@ -1566,7 +1600,20 @@ function filteredInscritos() {
   }
 
   if (state.filters.status)   list = list.filter(i => i.status === state.filters.status);
-  if (state.filters.vendedor) list = list.filter(i => i.vendedor === state.filters.vendedor);
+  if (state.filters.vendedor) list = list.filter(i => (String(i.vendedor || "").trim() || "Venda direta") === state.filters.vendedor);
+  if (state.filters.cidade)   list = list.filter(i => (String(i.cidade || "").trim() || "Não informado") === state.filters.cidade);
+  if (state.filters.estado)   list = list.filter(i => (String(i.estado || "").trim() || "Não informado") === state.filters.estado);
+  if (state.filters.perfil)   list = list.filter(i => (["profissional", "estudante", "consumidor"].includes(i.perfil) ? i.perfil : "semPerfil") === state.filters.perfil);
+  if (state.filters.formacao) {
+    const [escopo, nome] = state.filters.formacao.split("::");
+    list = list.filter(i => {
+      const raw = String(i.formacao || "").trim();
+      if ((raw ? _humanizeFormacao(raw) : "Não informada") !== nome) return false;
+      if (escopo === "estudante") return i.perfil === "estudante";
+      if (i.perfil !== "profissional") return false;
+      return escopo !== "prescritores" || PRESCRITORES_KEYS.has(raw.toLowerCase());
+    });
+  }
   if (state.filters.variante) list = list.filter(i => i.variante === state.filters.variante);
   if (state.filters.impresso === "true")  list = list.filter(i => i.impresso === true);
   if (state.filters.impresso === "false") list = list.filter(i => !i.impresso);
@@ -1701,6 +1748,8 @@ function eventoViewPartialUpdate() {
 
   if (eventDashboard) eventDashboard.innerHTML = eventoDashboardContent(stats);
   if (eventAnalytics) eventAnalytics.innerHTML = eventoAnalyticsContent();
+  const activeStatFilters = root.querySelector("#active-stat-filters");
+  if (activeStatFilters) activeStatFilters.innerHTML = activeStatFiltersContent();
 
   if (batchBar) batchBar.outerHTML = batchActionsBar();
 
@@ -1852,6 +1901,19 @@ function handleClick(e) {
       if (filtrosRow) filtrosRow.innerHTML = cursosFiltrosRow();
       const grid = root.querySelector("#course-grid");
       if (grid) grid.innerHTML = courseGridContent();
+    } else if (action === "stat-filter") {
+      // Clique numa linha dos painéis (cidade, estado, perfil, profissão,
+      // vendedor) filtra a tabela; clicar de novo remove.
+      const { filterField: campo, filterValue: valor } = el.dataset;
+      state.filters[campo] = state.filters[campo] === valor ? "" : valor;
+      state.page = 1;
+      saveNav();
+      eventoViewPartialUpdate();
+    } else if (action === "remove-stat-filter") {
+      state.filters[el.dataset.filterField] = "";
+      state.page = 1;
+      saveNav();
+      eventoViewPartialUpdate();
     } else if (action === "quick-filter-status") {
       // Pill de atalho nos stat-cards — clicar de novo no mesmo remove o filtro.
       const value = el.dataset.statusValue;
