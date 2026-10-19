@@ -1,6 +1,6 @@
 // Cloudflare Worker — Shopify Webhook → Firestore
 // Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create · inventory_levels/update · products/create · products/update
-import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, buildEventoEncerradoFields, isDefaultVariant } from '../../../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, buildEventoEncerradoFields, isDefaultVariant, hasOnlineTag, isVarianteSemTitulo, buildEventoOnlineFields, TITULO_EVENTO_ONLINE } from '../../../shared/eventos.mjs';
 
 // ── Catálogo de cursos monitorados ─────────────────────────────────────────────
 
@@ -49,6 +49,18 @@ async function resolveCurso(productId, env) {
 }
 
 const SHOPIFY_STORE = 'smart-gr-pro.myshopify.com';
+
+// Produto tem a tag "Online"? Só consultado para itens sem variante real.
+async function isProdutoOnline(productId, env) {
+  if (!productId || !env?.SHOPIFY_ACCESS_TOKEN) return false;
+  const resp = await fetch(
+    `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}.json?fields=id,tags`,
+    { headers: { 'X-Shopify-Access-Token': env.SHOPIFY_ACCESS_TOKEN } }
+  );
+  if (resp.status === 404) return false;
+  if (!resp.ok) throw new Error(`Shopify product ${productId}: ${resp.status}`);
+  return hasOnlineTag((await resp.json()).product?.tags);
+}
 
 // Mapeia financial_status da Shopify para label operacional do portal.
 // Retorna null para 'paid' (o status operacional é mantido pelo operador).
@@ -205,6 +217,7 @@ function objToFields(obj) {
 
 class Firestore {
   constructor(projectId, token) {
+    this.projectId = projectId;
     this.base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
     this.auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   }
@@ -225,6 +238,44 @@ class Firestore {
       body: JSON.stringify({ fields: objToFields(data) }),
     });
     if (!resp.ok) throw new Error(`Firestore SET /${path}: ${resp.status} ${await resp.text()}`);
+  }
+
+  // Cria documento só se ainda não existir. Retorna false se outro webhook
+  // concorrente criou antes (webhooks orders/create, orders/paid e
+  // orders/updated chegam quase juntos para o mesmo pedido).
+  async create(path, data) {
+    const resp = await fetch(`${this.base}/${path}?currentDocument.exists=false`, {
+      method: 'PATCH',
+      headers: this.auth,
+      body: JSON.stringify({ fields: objToFields(data) }),
+    });
+    if (resp.ok) return true;
+    if (resp.status === 409 || resp.status === 400) {
+      const body = await resp.text();
+      if (/ALREADY_EXISTS|FAILED_PRECONDITION/.test(body)) return false;
+      throw new Error(`Firestore CREATE /${path}: ${resp.status} ${body}`);
+    }
+    throw new Error(`Firestore CREATE /${path}: ${resp.status} ${await resp.text()}`);
+  }
+
+  // Grava `data` e soma atomicamente `increments` (campos numéricos) no servidor,
+  // sem ler antes — dois pedidos simultâneos no mesmo evento não se sobrescrevem.
+  async patchIncrement(path, data, increments) {
+    const name = `projects/${this.projectId}/databases/(default)/documents/${path}`;
+    const resp = await fetch(`${this.base}:commit`, {
+      method: 'POST',
+      headers: this.auth,
+      body: JSON.stringify({
+        writes: [{
+          update: { name, fields: objToFields(data) },
+          updateMask: { fieldPaths: Object.keys(data) },
+          updateTransforms: Object.entries(increments).map(([fieldPath, n]) => ({
+            fieldPath, increment: { integerValue: String(n) },
+          })),
+        }],
+      }),
+    });
+    if (!resp.ok) throw new Error(`Firestore COMMIT /${path}: ${resp.status} ${await resp.text()}`);
   }
 
   // Atualiza apenas os campos especificados (equivalente a update com merge)
@@ -457,9 +508,11 @@ async function recalcEvento(db, productId, variantId, varianteTitle, date, env, 
   if (capacidadeDisponivel !== null) patch.capacidadeDisponivel = capacidadeDisponivel;
 
   if (exists) {
-    patch.totalInscritos = Math.max(0, (exists.totalInscritos || 0) + delta.total);
-    patch.confirmados    = Math.max(0, (exists.confirmados || 0) + delta.confirmados);
-    await db.patch(`cursos/${productId}/eventos/${variantId}`, patch);
+    // Incremento atômico no servidor (sem ler-e-gravar): o recalc diário corrige
+    // qualquer resíduo.
+    await db.patchIncrement(`cursos/${productId}/eventos/${variantId}`, patch, {
+      totalInscritos: delta.total, confirmados: delta.confirmados,
+    });
   } else {
     await db.set(`cursos/${productId}/eventos/${variantId}`, {
       varianteTitle: varianteTitle || '',
@@ -524,7 +577,7 @@ async function processOrder(db, order, financialStatus, env) {
 
   console.log(`[processOrder] Pedido=${order.name} id=${order.id} itens=${lineItems.length} financialStatus=${financialStatus}`);
 
-  for (const item of lineItems) {
+  for (let item of lineItems) {
     const productId = Number(item.product_id);
     const courseName = await resolveCurso(productId, env);
 
@@ -532,10 +585,20 @@ async function processOrder(db, order, financialStatus, env) {
       console.log(`[processOrder] Produto ignorado: product_id=${item.product_id} title="${item.title}"`);
       continue;
     }
-    if (!item.variant_id || !item.variant_title) {
+    if (!item.variant_id) {
       console.log(`[processOrder] Variante ausente: product_id=${item.product_id} variant_id=${item.variant_id}`);
       continue;
     }
+    // Curso online sem turmas: variante única vira o evento fixo "Online".
+    let variantTitle = item.variant_title;
+    if (isVarianteSemTitulo(variantTitle)) {
+      if (!(await isProdutoOnline(productId, env))) {
+        console.log(`[processOrder] Variante sem título em produto não-online: product_id=${item.product_id} variant_id=${item.variant_id}`);
+        continue;
+      }
+      variantTitle = TITULO_EVENTO_ONLINE;
+    }
+    item = { ...item, variant_title: variantTitle };
 
     console.log(`[processOrder] Produto identificado: "${courseName}" product_id=${productId} variant="${item.variant_title}"`);
 
@@ -583,21 +646,15 @@ async function processOrder(db, order, financialStatus, env) {
     // Confirmado/Presente só é setado por ação manual do operador (fora
     // deste worker) — aqui o status ou fica igual (patch sem tocar `status`)
     // ou é sobrescrito pro rótulo de inativo, nunca vira Confirmado/Presente.
-    const isConfirmadoAfter = existing && isActive ? isConfirmado(existing) : false;
-    const delta = deltaAgregados(existing, isActive, isConfirmadoAfter, fin.quantidade);
+    const calcDelta = (ex) => deltaAgregados(ex, isActive, ex && isActive ? isConfirmado(ex) : false, fin.quantidade);
+    let delta = calcDelta(existing);
 
-    if (existing) {
-      const updateData = { ...base };
-      // Registra quando o financialStatus realmente mudou
-      if (existing.financialStatus !== financialStatus) updateData.financialStatusUpdatedAt = now;
-      // Não pago: sobrescreve o status operacional com o rótulo real da Shopify
-      // (evita que um inscrito reembolsado/expirado/etc. continue exibindo um
-      // status operacional antigo como "Confirmado").
-      if (!isActive && statusLabel) updateData.status = statusLabel;
-      await db.patch(path, updateData);
-      console.log(`[processOrder] Inscrito atualizado: ${inscritoId} financialStatus=${financialStatus}`);
-    } else {
-      await db.set(path, {
+    // orders/create, orders/paid e orders/updated chegam quase juntos: se outro
+    // webhook criar o inscrito entre o get e o create, `create` devolve false e
+    // este cai no ramo de atualização (delta recalculado → não soma de novo).
+    let current = existing;
+    if (!current) {
+      const criado = await db.create(path, {
         ...base,
         status: isActive ? 'Não Confirmado' : (statusLabel || 'Pendente'),
         financialStatusUpdatedAt: now,
@@ -605,7 +662,24 @@ async function processOrder(db, order, financialStatus, env) {
         impresso: false, impressoEm: null, impressoPor: null,
         createdAt: now,
       });
-      console.log(`[processOrder] Inscrito criado: ${inscritoId} financialStatus=${financialStatus} cliente="${cust.cliente}"`);
+      if (criado) {
+        console.log(`[processOrder] Inscrito criado: ${inscritoId} financialStatus=${financialStatus} cliente="${cust.cliente}"`);
+      } else {
+        current = await db.get(path);
+        delta = calcDelta(current);
+        console.log(`[processOrder] Inscrito já criado por webhook concorrente: ${inscritoId}`);
+      }
+    }
+    if (current) {
+      const updateData = { ...base };
+      // Registra quando o financialStatus realmente mudou
+      if (current.financialStatus !== financialStatus) updateData.financialStatusUpdatedAt = now;
+      // Não pago: sobrescreve o status operacional com o rótulo real da Shopify
+      // (evita que um inscrito reembolsado/expirado/etc. continue exibindo um
+      // status operacional antigo como "Confirmado").
+      if (!isActive && statusLabel) updateData.status = statusLabel;
+      await db.patch(path, updateData);
+      console.log(`[processOrder] Inscrito atualizado: ${inscritoId} financialStatus=${financialStatus}`);
     }
 
     affected.push({ productId, courseName, variantId, varianteTitle: item.variant_title, date: parsed.date, delta });
@@ -787,6 +861,14 @@ async function handleProductUpsert(db, payload, env) {
     for (const variant of variantsPadrao) {
       const id = String(variant.id);
       const ev = existentes.get(id);
+      // Curso online: a variante única é o evento fixo "Online" (ativo, sem data)
+      if (hasOnlineTag(payload.tags)) {
+        const campos = buildEventoOnlineFields(variant);
+        if (ev && !eventoMudou(ev, campos)) continue;
+        await db.patch(`cursos/${productId}/eventos/${id}`, { ...campos, updatedAt: now });
+        if (ev) atualizados++; else criados++;
+        continue;
+      }
       if (!ev || (ev.ativo === false && ev.encerrado === true)) continue;
       const path = `cursos/${productId}/eventos/${id}`;
       await db.patch(path, { ...buildEventoEncerradoFields(), updatedAt: now });

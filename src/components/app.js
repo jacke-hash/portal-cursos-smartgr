@@ -838,6 +838,7 @@ function inscritosStats() {
     presentes:      ativos.filter(i => i.status === "Presente").length,
     ausentes:       ativos.filter(i => i.status === "Ausente").length,
     desistentes:    ativos.filter(i => i.status === "Desistente").length,
+    remanejados:    ativos.filter(i => i.status === "Remanejado").length,
     impressos:      ativos.filter(i => i.impresso === true).length,
     // Contagens de inativos — apenas para auditoria
     cancelados:        inativos.filter(i => i.financialStatus === "cancelled"         || i.status === "Cancelado").length,
@@ -1169,6 +1170,9 @@ function eventoDashboardContent(stats) {
         <span><i class="status-dot status-dot--ok"></i>${stats.confirmados} confirmados</span>
         <span><i class="status-dot status-dot--wait"></i>${stats.naoConfirmados} aguardando confirmação</span>
         <span><i class="status-dot status-dot--info"></i>${stats.presentes} presentes</span>
+        ${stats.remanejados ? `<span><i class="status-dot status-dot--muted"></i>${stats.remanejados} remanejado${stats.remanejados !== 1 ? "s" : ""}</span>` : ""}
+        ${stats.ausentes ? `<span><i class="status-dot status-dot--muted"></i>${stats.ausentes} ausente${stats.ausentes !== 1 ? "s" : ""}</span>` : ""}
+        ${stats.desistentes ? `<span><i class="status-dot status-dot--muted"></i>${stats.desistentes} desistente${stats.desistentes !== 1 ? "s" : ""}</span>` : ""}
         ${stats.totalInativos ? `<span><i class="status-dot status-dot--muted"></i>${stats.totalInativos} inativo${stats.totalInativos !== 1 ? "s" : ""}</span>` : ""}
       </div>
     </section>`;

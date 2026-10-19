@@ -55,6 +55,31 @@ export function isDefaultVariant(variant) {
   return variant?.title === 'Default Title';
 }
 
+// Curso online (tag "Online") sem turmas: a variante única vira um evento fixo
+// "Online", sem data, sempre ativo — é nele que as inscrições são gravadas.
+export const TITULO_EVENTO_ONLINE = 'Online';
+
+export function hasOnlineTag(tags) {
+  const list = Array.isArray(tags) ? tags : String(tags || '').split(',');
+  return list.some(t => String(t).trim().toLowerCase() === 'online');
+}
+
+// Variante de line item de pedido sem opção real: título ausente ou "Default Title".
+export function isVarianteSemTitulo(title) {
+  return !title || title === 'Default Title';
+}
+
+export function buildEventoOnlineFields(variant) {
+  return {
+    varianteTitle: TITULO_EVENTO_ONLINE,
+    varianteId:    String(variant.id),
+    data:          null,
+    ativo:         true,
+    encerrado:     false,
+    ...(typeof variant.inventory_quantity === 'number' ? { capacidadeDisponivel: variant.inventory_quantity } : {}),
+  };
+}
+
 // Campos do evento que vêm da Shopify (título, data, estoque). Nunca inclui
 // totalInscritos/confirmados/agregados — esses são do portal/webhook de pedidos.
 // Retorna null se a variante não gera evento (título inválido ou antes do corte).

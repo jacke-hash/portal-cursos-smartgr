@@ -53,7 +53,7 @@ async function main() {
 
   for (const [productId, { nome }] of cursos) {
     const eventosSnap = await db.collection('cursos').doc(String(productId)).collection('eventos').get();
-    let ativosNoCurso = 0;
+    let ativosNoCurso = 0, totalNoCurso = 0;
 
     for (const eventoDoc of eventosSnap.docs) {
       eventosVarridos++;
@@ -66,6 +66,7 @@ async function main() {
       const totalReal = ativos.reduce((s, i) => s + qty(i), 0);
       const confirmadosReal = ativos.filter(isConfirmado).reduce((s, i) => s + qty(i), 0);
 
+      totalNoCurso += totalReal;
       const atual = eventoDoc.data();
       const totalSalvo = atual.totalInscritos || 0;
       const confirmadosSalvo = atual.confirmados || 0;
@@ -108,9 +109,9 @@ async function main() {
     // recontagem também corrige esse número (e totalEventos) no doc do curso.
     const cursoRef = db.collection('cursos').doc(String(productId));
     const cursoAtual = (await cursoRef.get()).data() || {};
-    if (cursoAtual.totalEventosAtivos !== ativosNoCurso || cursoAtual.totalEventos !== eventosSnap.size) {
-      if (APPLY) await cursoRef.set({ totalEventos: eventosSnap.size, totalEventosAtivos: ativosNoCurso, updatedAt: Timestamp.now() }, { merge: true });
-      console.log(`  ${APPLY ? '' : '(simulação) '}${nome}: eventos ativos ${cursoAtual.totalEventosAtivos}→${ativosNoCurso} | totalEventos ${cursoAtual.totalEventos}→${eventosSnap.size}`);
+    if (cursoAtual.totalEventosAtivos !== ativosNoCurso || cursoAtual.totalEventos !== eventosSnap.size || cursoAtual.totalInscritos !== totalNoCurso) {
+      if (APPLY) await cursoRef.set({ totalEventos: eventosSnap.size, totalEventosAtivos: ativosNoCurso, totalInscritos: totalNoCurso, updatedAt: Timestamp.now() }, { merge: true });
+      console.log(`  ${APPLY ? '' : '(simulação) '}${nome}: eventos ativos ${cursoAtual.totalEventosAtivos}→${ativosNoCurso} | totalEventos ${cursoAtual.totalEventos}→${eventosSnap.size} | totalInscritos ${cursoAtual.totalInscritos}→${totalNoCurso}`);
     }
   }
 
