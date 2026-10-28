@@ -484,8 +484,15 @@ async function resolveVariantFromInventoryItem(inventoryItemId, accessToken) {
 function isConfirmado(i) {
   return i?.status === 'Confirmado' || i?.status === 'Presente';
 }
+// Só assume 1 quando o campo não existe ou não é número (null/undefined/NaN/
+// texto vazio ou inválido); 0 é valor válido (pedido cancelado/zerado) e
+// negativo vira 0. O teste `== null` vem antes da conversão porque Number(null) é 0.
 function qtyOf(i) {
-  return Number(i?.quantidade) || 1;
+  const q = i?.quantidade;
+  if (q == null) return 1;
+  if (typeof q === 'string' && q.trim() === '') return 1;
+  const n = Number(q);
+  return Number.isNaN(n) ? 1 : Math.max(0, n);
 }
 function deltaAgregados(existing, isActiveAfter, isConfirmadoAfter, qtyAfter) {
   const qtyBefore      = existing ? qtyOf(existing) : 0;
@@ -568,9 +575,6 @@ async function recalcCurso(db, productId, nomeCurso) {
 // ── Handlers de pedidos ───────────────────────────────────────────────────────
 
 async function processOrder(db, order, financialStatus, env) {
-  const isActive = financialStatus === 'paid';
-  // Rótulo operacional para financialStatus não pago (mesma regra de sync-shopify.mjs)
-  const statusLabel = shopifyStatusLabel(financialStatus, order.cancelled_at);
   const now      = new Date();
   const affected = [];
   const lineItems = order.line_items || [];
@@ -616,6 +620,15 @@ async function processOrder(db, order, financialStatus, env) {
     const inscritoId = `${order.id}-${variantId}`;
     const path       = `cursos/${productId}/eventos/${variantId}/inscritos/${inscritoId}`;
 
+    // Cancelado (cancelled_at) ou linha zerada (current_quantity 0) nunca é
+    // ativo, mesmo com financial_status 'paid'. Grava o mesmo valor de
+    // handleCancelled, pra ficar consistente.
+    const cancelado   = !!order.cancelled_at || (financialStatus === 'paid' && item.current_quantity === 0);
+    const finStatus   = cancelado ? 'cancelled' : financialStatus;
+    const isActive    = finStatus === 'paid';
+    // Rótulo operacional para financialStatus não pago (mesma regra de sync-shopify.mjs)
+    const statusLabel = cancelado ? 'Cancelado' : shopifyStatusLabel(finStatus, null);
+
     console.log(`[processOrder] Evento identificado: variantId=${variantId} date=${parsed.date?.toISOString() || 'sem_data'} local="${parsed.local}"`);
 
     const fin  = calcFinancials(item, order);
@@ -624,6 +637,12 @@ async function processOrder(db, order, financialStatus, env) {
     console.log(`[processOrder] Financeiro: subtotal=${fin.precoCatalogo * fin.quantidade} descontoAplicado=${fin.descontoAplicado} valorFinalPago=${fin.valorFinalPago} cliente="${cust.cliente}"`);
 
     const existing = await db.get(path);
+    // Evento atrasado (paid/updated gerado antes do cancelamento) nunca
+    // reativa um inscrito já cancelado.
+    if (existing?.financialStatus === 'cancelled' && !cancelado) {
+      console.log(`[processOrder] ${inscritoId} já cancelado — evento atrasado (${financialStatus}) ignorado`);
+      continue;
+    }
     // O checkout grava o CPF em note_attributes (cpf_cliente), não no metafield
     // custom.cpf do cliente — esse metafield praticamente nunca é preenchido.
     // Reaproveita o CPF já salvo — nunca sobrescreve com vazio; senão usa o
@@ -639,7 +658,7 @@ async function processOrder(db, order, financialStatus, env) {
       ...fin, valor: fin.valorFinalPago,
       dataCompra: new Date(order.created_at),
       ...cust, cpf,
-      financialStatus,
+      financialStatus: finStatus,
       updatedAt: now,
     };
 
@@ -673,7 +692,7 @@ async function processOrder(db, order, financialStatus, env) {
     if (current) {
       const updateData = { ...base };
       // Registra quando o financialStatus realmente mudou
-      if (current.financialStatus !== financialStatus) updateData.financialStatusUpdatedAt = now;
+      if (current.financialStatus !== finStatus) updateData.financialStatusUpdatedAt = now;
       // Não pago: sobrescreve o status operacional com o rótulo real da Shopify
       // (evita que um inscrito reembolsado/expirado/etc. continue exibindo um
       // status operacional antigo como "Confirmado").
@@ -718,7 +737,9 @@ async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
     const path       = `cursos/${productId}/eventos/${variantId}/inscritos/${inscritoId}`;
 
     const existing = await db.get(path);
-    if (existing) {
+    if (existing?.financialStatus === 'cancelled') {
+      console.log(`[updateInscritoFinancialStatus] ${inscritoId} já cancelado — ${financialStatus} ignorado`);
+    } else if (existing) {
       await db.patch(path, { financialStatus, status: statusLabel, updatedAt: now });
       console.log(`[updateInscritoFinancialStatus] ${inscritoId}: ${financialStatus} → "${statusLabel}"`);
       // fs não-pago aqui sempre → inativo, status sempre um rótulo inativo

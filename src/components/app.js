@@ -41,6 +41,16 @@ function isInscritoAtivo(i) {
   return !INACTIVE_STATUS_LABELS.has(i.status);
 }
 
+// Ingressos do inscrito — mesma regra de qtyOf do worker: 1 só quando o campo
+// não existe ou não é número; 0 vale 0; negativo vira 0.
+function quantidadeIngressos(i) {
+  const q = i?.quantidade;
+  if (q == null) return 1;
+  if (typeof q === 'string' && q.trim() === '') return 1;
+  const n = Number(q);
+  return Number.isNaN(n) ? 1 : Math.max(0, n);
+}
+
 const PAGE_SIZE = 25;
 
 // Número de colunas da tabela de inscritos (checkbox + colunas de dado) —
@@ -899,7 +909,7 @@ function compradorKey(i) {
 // Painel executivo: conta ingressos (quantidade) e não apenas pedidos.
 function eventoInsights() {
   const ativos = state.inscritos.filter(isInscritoAtivo);
-  const quantidade = (i) => Math.max(1, Number(i.quantidade) || 1);
+  const quantidade = quantidadeIngressos;
   const somaQuantidade = (lista) => lista.reduce((total, i) => total + quantidade(i), 0);
   const agrupar = (lista, campo, vazio) => {
     const grupos = new Map();
@@ -1644,7 +1654,7 @@ function filteredInscritos() {
   if (state.filters.perfil)   list = list.filter(i => (["profissional", "estudante", "consumidor"].includes(i.perfil) ? i.perfil : "semPerfil") === state.filters.perfil);
   if (state.filters.qtd) {
     const totais = new Map();
-    state.inscritos.filter(isInscritoAtivo).forEach(i => totais.set(compradorKey(i), (totais.get(compradorKey(i)) || 0) + Math.max(1, Number(i.quantidade) || 1)));
+    state.inscritos.filter(isInscritoAtivo).forEach(i => totais.set(compradorKey(i), (totais.get(compradorKey(i)) || 0) + quantidadeIngressos(i)));
     list = list.filter(i => String(totais.get(compradorKey(i))) === state.filters.qtd);
   }
   if (state.filters.formacao) {

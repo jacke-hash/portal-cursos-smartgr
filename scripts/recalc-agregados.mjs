@@ -46,6 +46,15 @@ function isInscritoAtivo(i) {
 function isConfirmado(i) {
   return i.status === 'Confirmado' || i.status === 'Presente';
 }
+// Mesma regra de qtyOf do worker: 1 só quando o campo não existe ou não é
+// número; 0 vale 0; negativo vira 0.
+function qtyOf(i) {
+  const q = i?.quantidade;
+  if (q == null) return 1;
+  if (typeof q === 'string' && q.trim() === '') return 1;
+  const n = Number(q);
+  return Number.isNaN(n) ? 1 : Math.max(0, n);
+}
 
 async function main() {
   const cursos = await loadCursos(db);
@@ -62,9 +71,8 @@ async function main() {
       const ativos = inscritos.filter(isInscritoAtivo);
       // Conta ingressos (soma de quantidade), não pedidos — mesmo critério
       // do worker e do painel do evento (eventoInsights).
-      const qty = i => Number(i.quantidade) || 1;
-      const totalReal = ativos.reduce((s, i) => s + qty(i), 0);
-      const confirmadosReal = ativos.filter(isConfirmado).reduce((s, i) => s + qty(i), 0);
+      const totalReal = ativos.reduce((s, i) => s + qtyOf(i), 0);
+      const confirmadosReal = ativos.filter(isConfirmado).reduce((s, i) => s + qtyOf(i), 0);
 
       totalNoCurso += totalReal;
       const atual = eventoDoc.data();
