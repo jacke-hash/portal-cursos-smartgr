@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant } from '../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant, extractCupom } from '../shared/eventos.mjs';
 
 // --- Caminhos ---
 
@@ -617,6 +617,7 @@ async function sync() {
             empresa,
             cpf,
             vendedor,
+            cupom: extractCupom(order),
             formacao,
             perfil,
             especialidade,
@@ -648,6 +649,7 @@ async function sync() {
             empresa,
             cpf,
             vendedor,
+            cupom: extractCupom(order),
             formacao,
             perfil,
             especialidade,

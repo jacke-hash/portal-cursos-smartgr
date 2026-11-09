@@ -56,14 +56,14 @@ const PAGE_SIZE = 25;
 // Número de colunas da tabela de inscritos (checkbox + colunas de dado) —
 // usado no colspan das linhas de "carregando"/"vazio". Uma única fonte:
 // esse valor já apareceu duplicado como literal em 2 lugares e divergiu.
-const TABLE_COL_COUNT = 9;
+const TABLE_COL_COUNT = 10;
 
 // Única fonte de verdade do "filtro zerado" de inscritos — reusada em todo
 // ponto que reseta state.filters. Antes, esse literal era repetido em 6
 // lugares e 3 deles esqueciam a chave `inativos`, deixando o filtro de
 // inativos num estado inconsistente após certas navegações.
 const DEFAULT_INSCRITO_FILTERS = Object.freeze({
-  status: "", vendedor: "", variante: "", impresso: "", inativos: "", valor: "",
+  status: "", vendedor: "", cupom: "", variante: "", impresso: "", inativos: "", valor: "",
   // Filtros disparados por clique nos painéis de analytics (cidade, estado,
   // perfil, profissão). `formacao` guarda "escopo::nome" (ver matchStatFilter).
   cidade: "", estado: "", perfil: "", formacao: "", qtd: "",
@@ -256,6 +256,7 @@ let state = {
     estudante:    { chart: "donut", expanded: false },
     publico:      { chart: "donut", expanded: false },
     vendedores:   { chart: "donut", expanded: false },
+    cupons:       { chart: "donut", expanded: false },
     estado:       { chart: "donut", expanded: false },
     cidade:       { chart: "donut", expanded: false },
   },
@@ -906,6 +907,11 @@ function compradorKey(i) {
   return `p:${i.pedido || i.id}`;
 }
 
+// Cupons do inscrito: o campo `cupom` guarda os códigos separados por vírgula
+// (pedido com mais de um cupom). Vazio = sem cupom.
+const SEM_CUPOM = "Sem cupom";
+const cuponsDe = (i) => String(i?.cupom || "").split(",").map((c) => c.trim()).filter(Boolean);
+
 // Painel executivo: conta ingressos (quantidade) e não apenas pedidos.
 function eventoInsights() {
   const ativos = state.inscritos.filter(isInscritoAtivo);
@@ -949,6 +955,15 @@ function eventoInsights() {
   });
 
   const vendedores = agrupar(ativos, "vendedor", "Venda direta");
+  // Pedido com 2+ cupons conta em cada um deles (por isso a soma pode passar do total).
+  const gruposCupom = new Map();
+  ativos.forEach((i) => {
+    const codigos = cuponsDe(i);
+    (codigos.length ? codigos : [SEM_CUPOM]).forEach((c) => gruposCupom.set(c, (gruposCupom.get(c) || 0) + quantidade(i)));
+  });
+  const cupons = [...gruposCupom.entries()]
+    .map(([nome, total]) => ({ nome, total }))
+    .sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, "pt-BR"));
   const estados = agrupar(ativos, "estado", "Não informado");
   const cidades = agrupar(ativos, "cidade", "Não informado");
 
@@ -1004,6 +1019,7 @@ function eventoInsights() {
       especialidades: especialidadesPorProfissao,
     },
     vendedores,
+    cupons,
     regiao: { estados, cidades },
     ingressosPorPessoa,
   };
@@ -1203,6 +1219,10 @@ function eventoAnalyticsContent() {
           ${_statGroup("Todos os vendedores", "vendedores", insights.vendedores, null, 6, null, "vendedor")}
         </article>
         <article class="analytics-panel">
+          <div class="event-panel-heading"><div><span class="event-kpi-label">Cupons</span><strong>${insights.cupons.filter((c) => c.nome !== SEM_CUPOM).length} cupo${insights.cupons.filter((c) => c.nome !== SEM_CUPOM).length !== 1 ? "ns" : "m"}</strong></div><span class="event-panel-caption">pagos</span></div>
+          ${_statGroup("Todos os cupons", "cupons", insights.cupons, null, 6, null, "cupom")}
+        </article>
+        <article class="analytics-panel">
           <div class="event-panel-heading"><div><span class="event-kpi-label">Ingressos por pessoa</span><strong>${insights.ingressosPorPessoa.reduce((s, g) => s + g.total, 0)} pessoas</strong></div><span class="event-panel-caption">pagos</span></div>
           ${_statGroup("Quantos ingressos cada pessoa comprou", "qtd", insights.ingressosPorPessoa, null, 6, null, "qtd")}
           <p class="stat-hint">Clique numa linha para ver só quem comprou essa quantidade.</p>
@@ -1244,7 +1264,7 @@ function eventoAnalyticsContent() {
     </section>`;
 }
 
-const STAT_FILTER_LABELS = { cidade: "Cidade", estado: "Estado", perfil: "Perfil", formacao: "Profissão", vendedor: "Vendedor", qtd: "Ingressos por pessoa" };
+const STAT_FILTER_LABELS = { cidade: "Cidade", estado: "Estado", perfil: "Perfil", formacao: "Profissão", vendedor: "Vendedor", cupom: "Cupom", qtd: "Ingressos por pessoa" };
 const PERFIL_FILTER_LABELS = { profissional: "Profissional", estudante: "Estudante", consumidor: "Consumidor final", semPerfil: "Não informado" };
 
 // Chips dos filtros vindos dos painéis de analytics, com ✕ pra remover cada um.
@@ -1261,13 +1281,13 @@ function activeStatFiltersContent() {
     }).join("");
 }
 
-function _filtersBar(vendedores, variantes) {
+function _filtersBar(vendedores, variantes, cupons) {
   return `
     <div id="active-stat-filters" class="active-stat-filters">${activeStatFiltersContent()}</div>
     <div class="filters-bar">
       <div class="filter-wrap filter-wrap--grow">
         <span class="filter-icon">${icon.search()}</span>
-        <input class="search" data-action="search" placeholder="Buscar pedido, nome, email, CPF, telefone, vendedor, cidade..." value="${state.search}">
+        <input class="search" data-action="search" placeholder="Buscar pedido, nome, email, CPF, telefone, vendedor, cupom, cidade..." value="${state.search}">
       </div>
       <select class="filter-select" data-filter="status">
         <option value="">Todos os status</option>
@@ -1276,6 +1296,10 @@ function _filtersBar(vendedores, variantes) {
       <select class="filter-select" data-filter="vendedor">
         <option value="">Todos os vendedores</option>
         ${vendedores.map(v => `<option value="${v}" ${state.filters.vendedor === v ? "selected" : ""}>${v}</option>`).join("")}
+      </select>
+      <select class="filter-select" data-filter="cupom">
+        <option value="">Todos os cupons</option>
+        ${cupons.map(c => `<option value="${c}" ${state.filters.cupom === c ? "selected" : ""}>${c}</option>`).join("")}
       </select>
       <select class="filter-select" data-filter="variante">
         <option value="">Todas as variantes</option>
@@ -1323,6 +1347,7 @@ function _tableSection(paginated, colSpan = TABLE_COL_COUNT) {
             <th>CPF</th>
             ${th("variante", "Ingresso")}
             ${th("vendedor", "Vendedor")}
+            ${th("cupom", "Cupom")}
             <th>Status</th>
             <th>Observação</th>
             <th>Impresso</th>
@@ -1364,6 +1389,7 @@ function eventoView() {
   const paginated = inscritos.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
   const totalPages = Math.ceil(inscritos.length / PAGE_SIZE);
   const vendedores = [...new Set(state.inscritos.map(i => i.vendedor).filter(Boolean))];
+  const cupons = _opcoesCupom();
   const variantes  = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
   const stats = inscritosStats();
 
@@ -1398,7 +1424,7 @@ function eventoView() {
       <p class="results-count" id="results-count">${inscritos.length} inscrito${inscritos.length !== 1 ? "s" : ""} encontrado${inscritos.length !== 1 ? "s" : ""}</p>
     </div>
 
-    ${_filtersBar(vendedores, variantes)}
+    ${_filtersBar(vendedores, variantes, cupons)}
 
     <div class="mobile-cards" id="mobile-cards">
       ${!state.inscritosLoaded
@@ -1537,6 +1563,7 @@ function inscritoRow(inscrito) {
         <div class="cell-secondary">Qtd: ${inscrito.quantidade ?? 1}</div>
       </td>
       <td><span class="cell-plain">${inscrito.vendedor || "--"}</span></td>
+      <td><span class="cell-plain">${inscrito.cupom || "--"}</span></td>
       <td>
         ${ativo
           ? `<select class="status-select status-${cls}" data-action="change-status" data-inscrito-id="${inscrito.id}">
@@ -1581,6 +1608,7 @@ function inscritoCard(inscrito) {
           <span>🪪 ${inscrito.cpf || "CPF não informado"}</span>
           ${inscrito.cidade   ? `<span>📍 ${inscrito.cidade}${inscrito.estado ? " – " + inscrito.estado : ""}</span>` : ""}
           ${inscrito.vendedor ? `<span>👤 ${inscrito.vendedor}</span>` : ""}
+          ${inscrito.cupom ? `<span>🏷️ ${inscrito.cupom}</span>` : ""}
         </div>
       </div>
       <div class="mc-bottom">
@@ -1639,7 +1667,7 @@ function filteredInscritos() {
     const qDigits = normalizeDigits(state.search);
     list = list.filter(i => {
       const matchesTexto = [i.pedido, i.cliente, i.email, i.cpf, i.telefone,
-        i.cidade, i.estado, i.variante, i.vendedor, formatDate(i.dataCompra)]
+        i.cidade, i.estado, i.variante, i.vendedor, i.cupom, formatDate(i.dataCompra)]
         .some(v => normalize(v).includes(q));
       // Busca por CPF ignorando pontuação — "06299475897" encontra "062.994.758-97"
       const matchesCpf = qDigits && normalizeDigits(i.cpf).includes(qDigits);
@@ -1649,6 +1677,7 @@ function filteredInscritos() {
 
   if (state.filters.status)   list = list.filter(i => i.status === state.filters.status);
   if (state.filters.vendedor) list = list.filter(i => (String(i.vendedor || "").trim() || "Venda direta") === state.filters.vendedor);
+  if (state.filters.cupom)    list = list.filter(i => (cuponsDe(i).length ? cuponsDe(i) : [SEM_CUPOM]).includes(state.filters.cupom));
   if (state.filters.cidade)   list = list.filter(i => (String(i.cidade || "").trim() || "Não informado") === state.filters.cidade);
   if (state.filters.estado)   list = list.filter(i => (String(i.estado || "").trim() || "Não informado") === state.filters.estado);
   if (state.filters.perfil)   list = list.filter(i => (["profissional", "estudante", "consumidor"].includes(i.perfil) ? i.perfil : "semPerfil") === state.filters.perfil);
@@ -1761,6 +1790,12 @@ function _partialUpdateSelection() {
 // [fix] Atualiza as <option> de um <select> de filtro preservando o valor selecionado.
 // Necessário porque os selects de vendedor/variante só têm dados depois que o
 // Firestore entrega os inscritos — bem depois do render inicial da tela.
+// Opções do select de cupons: cada código usado + "Sem cupom" quando há pedido sem.
+function _opcoesCupom() {
+  const codigos = [...new Set(state.inscritos.flatMap(cuponsDe))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  return state.inscritos.some((i) => !cuponsDe(i).length) && codigos.length ? [...codigos, SEM_CUPOM] : codigos;
+}
+
 function _updateFilterSelectOptions(selector, defaultLabel, values, currentValue) {
   const el = root.querySelector(selector);
   if (!el) return;
@@ -1786,6 +1821,7 @@ function eventoViewPartialUpdate() {
   const totalPages   = Math.ceil(inscritos.length / PAGE_SIZE);
   const stats        = inscritosStats();
   const vendedores   = [...new Set(state.inscritos.map(i => i.vendedor).filter(Boolean))];
+  const cupons       = _opcoesCupom();
   const variantes    = [...new Set(state.inscritos.map(i => i.variante).filter(Boolean))];
 
   const eventDashboard = root.querySelector("#event-dashboard");
@@ -1825,6 +1861,7 @@ function eventoViewPartialUpdate() {
   // porque o full render inicial roda ANTES do Firestore entregar os dados,
   // e este é o único ponto que atualiza a tela depois disso.
   _updateFilterSelectOptions('[data-filter="vendedor"]', "Todos os vendedores", vendedores, state.filters.vendedor);
+  _updateFilterSelectOptions('[data-filter="cupom"]', "Todos os cupons", cupons, state.filters.cupom);
   _updateFilterSelectOptions('[data-filter="variante"]', "Todas as variantes", variantes, state.filters.variante);
 
   if (tbody) tbody.innerHTML = !state.inscritosLoaded
@@ -2268,6 +2305,7 @@ function openEvento(eventoId) {
     estudante:    { chart: "donut", expanded: false },
     publico:      { chart: "donut", expanded: false },
     vendedores:   { chart: "donut", expanded: false },
+    cupons:       { chart: "donut", expanded: false },
     estado:       { chart: "donut", expanded: false },
     cidade:       { chart: "donut", expanded: false },
   };
@@ -2306,7 +2344,7 @@ const EXPORT_HEADERS = [
   "Cidade", "Estado", "Pedido Shopify", "Data Compra",
   "Curso", "Evento", "Variante",
   "Quantidade", "Preço Catálogo", "Desconto Aplicado", "Valor Unitário Pago", "Valor Final Pago",
-  "Vendedor", "Status", "Observação", "Impresso"
+  "Vendedor", "Cupom", "Status", "Observação", "Impresso"
 ];
 
 function exportRow(i) {
@@ -2332,7 +2370,7 @@ function exportRow(i) {
     desconto  ? money.format(desconto)  : "0,00",
     unitario  ? money.format(unitario)  : "0,00",
     final     ? money.format(final)     : "0,00",
-    i.vendedor || "", i.status || "", i.observacao || "",
+    i.vendedor || "", i.cupom || "", i.status || "", i.observacao || "",
     i.impresso ? "SIM" : "NÃO"
   ];
 }

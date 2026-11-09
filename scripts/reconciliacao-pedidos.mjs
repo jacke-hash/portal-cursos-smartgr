@@ -23,6 +23,7 @@
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { loadCursos } from '../shared/cursos.mjs';
+import { remapVarianteLegada } from '../shared/eventos.mjs';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -125,7 +126,8 @@ async function reconciliar() {
 
   const relevantes = [];
   for (const order of pedidosAtivos) {
-    for (const item of order.line_items || []) {
+    for (let item of order.line_items || []) {
+      item = remapVarianteLegada(item);
       const productId = Number(item.product_id);
       if (!cursos.has(productId)) continue;
       if (!item.variant_id) continue; // sem variant_id não há path determinístico a checar

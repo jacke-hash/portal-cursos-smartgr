@@ -1,6 +1,6 @@
 // Cloudflare Worker — Shopify Webhook → Firestore
 // Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create · inventory_levels/update · products/create · products/update
-import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, buildEventoEncerradoFields, isDefaultVariant, hasOnlineTag, isVarianteSemTitulo, buildEventoOnlineFields, TITULO_EVENTO_ONLINE } from '../../../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, buildEventoEncerradoFields, isDefaultVariant, hasOnlineTag, isVarianteSemTitulo, buildEventoOnlineFields, TITULO_EVENTO_ONLINE, remapVarianteLegada, extractCupom } from '../../../shared/eventos.mjs';
 
 // ── Catálogo de cursos monitorados ─────────────────────────────────────────────
 
@@ -406,6 +406,7 @@ function extractCustomer(order) {
     estado:   order.billing_address?.province || order.shipping_address?.province || '',
     empresa:  order.billing_address?.company  || order.customer?.default_address?.company || '',
     vendedor: attributes.find(a => a.name === 'Affiliate')?.value || '',
+    cupom:    extractCupom(order),
     perfil,
     formacao,
     especialidade,
@@ -582,6 +583,7 @@ async function processOrder(db, order, financialStatus, env) {
   console.log(`[processOrder] Pedido=${order.name} id=${order.id} itens=${lineItems.length} financialStatus=${financialStatus}`);
 
   for (let item of lineItems) {
+    item = remapVarianteLegada(item);
     const productId = Number(item.product_id);
     const courseName = await resolveCurso(productId, env);
 
@@ -728,7 +730,8 @@ async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
     return;
   }
   const now = new Date();
-  for (const item of order.line_items || []) {
+  for (let item of order.line_items || []) {
+    item = remapVarianteLegada(item);
     const productId = Number(item.product_id);
     if (!item.variant_id || !(await resolveCurso(productId, env))) continue;
 
@@ -753,7 +756,8 @@ async function updateInscritoFinancialStatus(db, order, financialStatus, env) {
 }
 
 async function handleCancelled(db, order, env) {
-  for (const item of order.line_items || []) {
+  for (let item of order.line_items || []) {
+    item = remapVarianteLegada(item);
     const productId = Number(item.product_id);
     if (!item.variant_id || !(await resolveCurso(productId, env))) continue;
 

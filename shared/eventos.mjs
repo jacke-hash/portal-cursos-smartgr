@@ -64,6 +64,34 @@ export function hasOnlineTag(tags) {
   return list.some(t => String(t).trim().toLowerCase() === 'online');
 }
 
+// Aula Master + Maratona Black Friday: o produto era "Online" (variante única,
+// já removida da Shopify) e passou a ter lotes. Pedidos antigos ainda carregam o
+// variant_id legado; webhooks/reconciliação os redirecionam ao lote correto:
+// preço de catálogo >= 99 (virada de 28/10) → 2º lote; antes disso → 1º lote.
+export const VARIANTE_LEGADA_BLACK_FRIDAY = {
+  legada: '67842414379051',
+  lote1:  { id: '68124170321963', titulo: '1º lote' },
+  lote2:  { id: '68124170354731', titulo: '2º lote' },
+};
+export const PRECO_VIRADA_LOTE2 = 99;
+
+export function remapVarianteLegada(item) {
+  const cfg = VARIANTE_LEGADA_BLACK_FRIDAY;
+  if (String(item?.variant_id) !== cfg.legada) return item;
+  const destino = (parseFloat(item.price) || 0) >= PRECO_VIRADA_LOTE2 ? cfg.lote2 : cfg.lote1;
+  return { ...item, variant_id: Number(destino.id), variant_title: destino.titulo };
+}
+
+// Cupons usados no pedido (order.discount_codes), em maiúsculas e sem repetição,
+// separados por ", ". Desconto automático (sem código) e pedido sem desconto
+// resultam em '' — o portal mostra "Sem cupom".
+export function extractCupom(order) {
+  const codigos = (order?.discount_codes || [])
+    .map(d => String(d?.code || '').trim().toUpperCase())
+    .filter(Boolean);
+  return [...new Set(codigos)].join(', ');
+}
+
 // Variante de line item de pedido sem opção real: título ausente ou "Default Title".
 export function isVarianteSemTitulo(title) {
   return !title || title === 'Default Title';
