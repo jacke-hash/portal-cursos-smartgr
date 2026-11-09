@@ -908,8 +908,7 @@ function compradorKey(i) {
 }
 
 // Cupons do inscrito: o campo `cupom` guarda os códigos separados por vírgula
-// (pedido com mais de um cupom). Vazio = sem cupom.
-const SEM_CUPOM = "Sem cupom";
+// (pedido com mais de um cupom). Vazio = pedido sem cupom (não aparece nos painéis).
 const cuponsDe = (i) => String(i?.cupom || "").split(",").map((c) => c.trim()).filter(Boolean);
 
 // Painel executivo: conta ingressos (quantidade) e não apenas pedidos.
@@ -959,7 +958,7 @@ function eventoInsights() {
   const gruposCupom = new Map();
   ativos.forEach((i) => {
     const codigos = cuponsDe(i);
-    (codigos.length ? codigos : [SEM_CUPOM]).forEach((c) => gruposCupom.set(c, (gruposCupom.get(c) || 0) + quantidade(i)));
+    codigos.forEach((c) => gruposCupom.set(c, (gruposCupom.get(c) || 0) + quantidade(i)));
   });
   const cupons = [...gruposCupom.entries()]
     .map(([nome, total]) => ({ nome, total }))
@@ -1237,7 +1236,7 @@ function eventoAnalyticsContent() {
           ${semPerfil.total ? `<div class="audience-group audience-group--flat audience-group--muted"><span>Não informado</span><b>${_statCount(semPerfil.total)}${_pctChip(pctSemPerfil)}</b></div>` : ""}
         </article>
         <article class="analytics-panel">
-          <div class="event-panel-heading"><div><span class="event-kpi-label">Cupons</span><strong>${insights.cupons.filter((c) => c.nome !== SEM_CUPOM).length} cupo${insights.cupons.filter((c) => c.nome !== SEM_CUPOM).length !== 1 ? "ns" : "m"}</strong></div><span class="event-panel-caption">pagos</span></div>
+          <div class="event-panel-heading"><div><span class="event-kpi-label">Cupons</span><strong>${insights.cupons.length} cupo${insights.cupons.length !== 1 ? "ns" : "m"}</strong></div><span class="event-panel-caption">pagos</span></div>
           ${_statGroup("Todos os cupons", "cupons", insights.cupons, null, 6, null, "cupom")}
         </article>
       </div>
@@ -1679,7 +1678,7 @@ function filteredInscritos() {
 
   if (state.filters.status)   list = list.filter(i => i.status === state.filters.status);
   if (state.filters.vendedor) list = list.filter(i => (String(i.vendedor || "").trim() || "Venda direta") === state.filters.vendedor);
-  if (state.filters.cupom)    list = list.filter(i => (cuponsDe(i).length ? cuponsDe(i) : [SEM_CUPOM]).includes(state.filters.cupom));
+  if (state.filters.cupom)    list = list.filter(i => cuponsDe(i).includes(state.filters.cupom));
   if (state.filters.cidade)   list = list.filter(i => (String(i.cidade || "").trim() || "Não informado") === state.filters.cidade);
   if (state.filters.estado)   list = list.filter(i => (String(i.estado || "").trim() || "Não informado") === state.filters.estado);
   if (state.filters.perfil)   list = list.filter(i => (["profissional", "estudante", "consumidor"].includes(i.perfil) ? i.perfil : "semPerfil") === state.filters.perfil);
@@ -1789,15 +1788,14 @@ function _partialUpdateSelection() {
 // ─── PARTIAL UPDATES ─────────────────────────────────────────────────────────
 // [alteração 4] Re-render cirúrgico preserva contexto do usuário sem refresh total
 
+// Opções do select de cupons: cada código usado nos inscritos, em ordem alfabética.
+function _opcoesCupom() {
+  return [...new Set(state.inscritos.flatMap(cuponsDe))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
 // [fix] Atualiza as <option> de um <select> de filtro preservando o valor selecionado.
 // Necessário porque os selects de vendedor/variante só têm dados depois que o
 // Firestore entrega os inscritos — bem depois do render inicial da tela.
-// Opções do select de cupons: cada código usado + "Sem cupom" quando há pedido sem.
-function _opcoesCupom() {
-  const codigos = [...new Set(state.inscritos.flatMap(cuponsDe))].sort((a, b) => a.localeCompare(b, "pt-BR"));
-  return state.inscritos.some((i) => !cuponsDe(i).length) && codigos.length ? [...codigos, SEM_CUPOM] : codigos;
-}
-
 function _updateFilterSelectOptions(selector, defaultLabel, values, currentValue) {
   const el = root.querySelector(selector);
   if (!el) return;
