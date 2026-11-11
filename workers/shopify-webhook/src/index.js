@@ -1,6 +1,6 @@
 // Cloudflare Worker — Shopify Webhook → Firestore
 // Evento: orders/paid · orders/create · orders/updated · orders/cancelled · refunds/create · inventory_levels/update · products/create · products/update
-import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, buildEventoEncerradoFields, isDefaultVariant, hasOnlineTag, isVarianteSemTitulo, buildEventoOnlineFields, TITULO_EVENTO_ONLINE, remapVarianteLegada, extractCupom } from '../../../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, buildEventoEncerradoFields, isDefaultVariant, hasOnlineTag, isVarianteSemTitulo, buildEventoOnlineFields, TITULO_EVENTO_ONLINE, remapVarianteLegada, extractCupom, statusCursoPorShopify } from '../../../shared/eventos.mjs';
 
 // ── Catálogo de cursos monitorados ─────────────────────────────────────────────
 
@@ -835,14 +835,22 @@ async function handleProductUpsert(db, payload, env) {
     return;
   }
 
-  const cursoExiste = !!(await db.get(`cursos/${productId}`));
+  const cursoDoc = await db.get(`cursos/${productId}`);
+  const cursoExiste = !!cursoDoc;
+
+  // Rascunho/arquivado ↔ publicado reflete no status do curso no portal
+  // ('draft' some da listagem padrão); hidden/finished do operador não mudam.
+  // Payload sem `status` é tratado como ativo, pra não parar o sync por um campo ausente.
+  const novoStatus = statusCursoPorShopify(payload.status || 'active', cursoDoc?.status);
+  if (cursoExiste && novoStatus) {
+    await db.patch(`cursos/${productId}`, { status: novoStatus, updatedAt: new Date() });
+    console.log(`[products] Curso ${productId} "${payload.title}": status → ${novoStatus}`);
+  }
 
   // Produto em rascunho/arquivado não mexe em eventos (criar, atualizar ou
-  // desativar). O curso em si ainda é criado se não existir. Payload sem
-  // `status` é tratado como ativo, pra não parar o sync por um campo ausente.
+  // desativar) e não cria o curso — ele só nasce quando o produto for publicado.
   if (payload.status && payload.status !== 'active') {
     console.log(`[products] Produto com status "${payload.status}": eventos ignorados id=${productId} "${payload.title}"`);
-    if (!cursoExiste) await recalcCurso(db, productId, payload.title || '');
     return;
   }
 

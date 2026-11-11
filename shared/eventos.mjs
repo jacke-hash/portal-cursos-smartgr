@@ -82,6 +82,17 @@ export function remapVarianteLegada(item) {
   return { ...item, variant_id: Number(destino.id), variant_title: destino.titulo };
 }
 
+// Status do curso no portal a partir do status do produto na Shopify.
+// Rascunho/arquivado → 'draft' (some da listagem padrão); ao publicar, 'draft'
+// volta a 'active'. 'hidden'/'finished' são decisão do operador no portal e
+// nunca são sobrescritos. Retorna o novo status, ou null se nada muda.
+export function statusCursoPorShopify(shopifyStatus, statusAtual) {
+  const rascunho = shopifyStatus === 'draft' || shopifyStatus === 'archived';
+  if (rascunho) return (statusAtual === undefined || statusAtual === 'active') ? 'draft' : null;
+  if (shopifyStatus === 'active' && statusAtual === 'draft') return 'active';
+  return null;
+}
+
 // Cupons usados no pedido (order.discount_codes), em maiúsculas e sem repetição,
 // separados por ", ". Desconto automático (sem código) e pedido sem desconto
 // resultam em '' — o portal mostra "Sem cupom".

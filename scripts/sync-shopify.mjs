@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant, extractCupom } from '../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant, extractCupom, statusCursoPorShopify } from '../shared/eventos.mjs';
 
 // --- Caminhos ---
 
@@ -313,11 +313,15 @@ async function sync() {
     const cursoRef = db.collection('cursos').doc(String(productId));
 
     try {
+      // Rascunho/arquivado na Shopify → status 'draft' no portal (e volta a 'active' ao publicar)
+      const statusAtual = (await cursoRef.get()).data()?.status;
+      const novoStatus = product ? statusCursoPorShopify(product.status, statusAtual) : null;
       await cursoRef.set(
         {
           nome: nomeCurso,
           shopifyProductId: String(productId),
           ativo: true,
+          ...(novoStatus ? { status: novoStatus } : {}),
           updatedAt: Timestamp.now(),
         },
         { merge: true }   // preserva totalInscritos e proximoEventoLabel existentes
