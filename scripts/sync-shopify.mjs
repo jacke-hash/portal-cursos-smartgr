@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant, extractCupom, statusCursoPorShopify } from '../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, buildEventoFields, isDefaultVariant, extractCupom, statusCursoPorShopify, remapVarianteLegada } from '../shared/eventos.mjs';
 
 // --- Caminhos ---
 
@@ -487,7 +487,8 @@ async function sync() {
       order.note_attributes?.find(a => a.name === 'Affiliate')?.value || '';
     const { perfil, formacao, especialidade } = extractFormacaoInfo(order.note_attributes || []);
 
-    for (const item of order.line_items) {
+    for (let item of order.line_items) {
+      item = remapVarianteLegada(item);
       const productId = Number(item.product_id);
       if (!VALID_PRODUCT_IDS.has(productId)) continue;
 

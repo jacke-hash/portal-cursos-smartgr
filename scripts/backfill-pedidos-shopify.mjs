@@ -20,7 +20,7 @@ import { fileURLToPath } from 'url';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { loadCursos } from '../shared/cursos.mjs';
-import { DATE_CUTOFF, parseVariantTitle, hasOnlineTag, isVarianteSemTitulo, buildEventoOnlineFields, TITULO_EVENTO_ONLINE } from '../shared/eventos.mjs';
+import { DATE_CUTOFF, parseVariantTitle, hasOnlineTag, isVarianteSemTitulo, buildEventoOnlineFields, TITULO_EVENTO_ONLINE, remapVarianteLegada, extractCupom } from '../shared/eventos.mjs';
 import { APPLY, avisoSimulacao } from '../shared/cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -96,6 +96,7 @@ function extractCustomer(order) {
     estado: order.billing_address?.province || order.shipping_address?.province || '',
     empresa: order.billing_address?.company || order.customer?.default_address?.company || '',
     vendedor: attributes.find(a => a.name === 'Affiliate')?.value || '',
+    cupom: extractCupom(order),
     perfil, formacao, especialidade,
   };
 }
@@ -118,7 +119,8 @@ async function main() {
   const eventos = new Set();
   for (const order of pedidos) {
     if (order.cancel_reason || order.cancelled_at) continue;
-    for (const item of order.line_items || []) {
+    for (let item of order.line_items || []) {
+      item = remapVarianteLegada(item);
       const productId = Number(item.product_id);
       if (!cursos.has(productId) || !item.variant_id) continue;
       // Curso online sem turmas: variante única vira o evento fixo "Online"

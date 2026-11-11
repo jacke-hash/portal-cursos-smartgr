@@ -75,11 +75,26 @@ export const VARIANTE_LEGADA_BLACK_FRIDAY = {
 };
 export const PRECO_VIRADA_LOTE2 = 99;
 
+// Smart Day Formadores 17/01: as 3 variantes originais foram trocadas por uma
+// única ("17/01 das 9h às 18h", id novo). Pedidos anteriores (e os feitos com o
+// produto em "Default Title", sem título) carregam o variant_id antigo.
+export const VARIANTE_LEGADA_SMART_DAY_FORMADORES = {
+  legadas: ['68036896784427', '68036896817195', '68036896849963'], // Dois dias, Dia 1, Dia 2
+  destino: { id: '68241053515819', titulo: '17/01 das 9h às 18h' },
+};
+
 export function remapVarianteLegada(item) {
-  const cfg = VARIANTE_LEGADA_BLACK_FRIDAY;
-  if (String(item?.variant_id) !== cfg.legada) return item;
-  const destino = (parseFloat(item.price) || 0) >= PRECO_VIRADA_LOTE2 ? cfg.lote2 : cfg.lote1;
-  return { ...item, variant_id: Number(destino.id), variant_title: destino.titulo };
+  const id = String(item?.variant_id);
+  const bf = VARIANTE_LEGADA_BLACK_FRIDAY;
+  if (id === bf.legada) {
+    const destino = (parseFloat(item.price) || 0) >= PRECO_VIRADA_LOTE2 ? bf.lote2 : bf.lote1;
+    return { ...item, variant_id: Number(destino.id), variant_title: destino.titulo };
+  }
+  const sd = VARIANTE_LEGADA_SMART_DAY_FORMADORES;
+  if (sd.legadas.includes(id)) {
+    return { ...item, variant_id: Number(sd.destino.id), variant_title: sd.destino.titulo };
+  }
+  return item;
 }
 
 // Status do curso no portal a partir do status do produto na Shopify.
